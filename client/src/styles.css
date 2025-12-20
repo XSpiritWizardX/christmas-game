@@ -75,7 +75,7 @@ body::before {
 .lobby-card {
   max-width: 880px;
   max-height: 92vh;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .fade-in {
@@ -742,5 +742,45 @@ button {
   .menu-actions button {
     padding: 8px 10px;
     font-size: 0.85rem;
+  }
+}
+
+@supports (height: 100svh) {
+  html,
+  body,
+  #root {
+    height: 100svh;
+  }
+
+  .app {
+    min-height: 100svh;
+  }
+
+  .game-shell {
+    height: 100svh;
+  }
+
+  .lobby-card {
+    max-height: 92svh;
+  }
+}
+
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+
+  .app {
+    min-height: 100dvh;
+  }
+
+  .game-shell {
+    height: 100dvh;
+  }
+
+  .lobby-card {
+    max-height: 92dvh;
   }
 }

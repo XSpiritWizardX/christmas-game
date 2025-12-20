@@ -50,7 +50,8 @@ const COLOR_HEX = {
 const MONSTER_STYLE = {
   small: { size: 20, color: "#ff6b6b" },
   medium: { size: 26, color: "#ff9f1c" },
-  big: { size: 32, color: "#8e24aa" }
+  big: { size: 32, color: "#8e24aa" },
+  yeti: { size: 38, color: "#bfe7ff" }
 };
 
 const TREE_DRAW = {
@@ -260,8 +261,14 @@ export default function GameCanvas({ world, room, youId, roundType }) {
     if (snapshot.gifts) {
       snapshot.gifts.forEach((gift) => {
         const bob = Math.sin(now * 3 + gift.id) * 2;
-        const giftType = gift.type || (roundType === "survival" || roundType === "maze" ? "candy" : "present");
-        const img = giftType === "candy" ? images?.candy : images?.gift;
+        const giftType =
+          gift.type || (roundType === "survival" || roundType === "maze" ? "candy" : "present");
+        const img =
+          giftType === "candy"
+            ? images?.candy
+            : giftType === "flag"
+            ? images?.star
+            : images?.gift;
         if (!drawImage(img, gift.x, gift.y + bob, 26)) {
           ctx.fillStyle = "#f2c14e";
           ctx.fillRect(gift.x - 10, gift.y - 10 + bob, 20, 20);
