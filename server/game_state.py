@@ -97,6 +97,8 @@ class RoomState:
     next_monster_projectile_id: int = 1
     next_decoration_id: int = 1
     round_order: list = field(default_factory=list)
+    round_elapsed: float = 0.0
+    ice_finish_line_spawned: bool = False
 
 
 class GameState:

@@ -278,6 +278,16 @@ export default function GameCanvas({ world, room, youId, roundType }) {
 
     if (snapshot.hazards) {
       snapshot.hazards.forEach((hazard) => {
+        if (hazard.type === "big_snowball") {
+          const size = (hazard.radius || 20) * 2;
+          if (!drawImage(images?.snowball, hazard.x, hazard.y, size)) {
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(hazard.x, hazard.y, hazard.radius || 20, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          return;
+        }
         if (!drawImage(images?.snowflake, hazard.x, hazard.y, 28)) {
           ctx.fillStyle = "#7ec8ff";
           ctx.beginPath();

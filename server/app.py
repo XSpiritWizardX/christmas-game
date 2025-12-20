@@ -18,7 +18,7 @@ ROUND_DURATIONS = {
     "survival": 45,
     "snowball": 120,
     "light": 120,
-    "ice": 45,
+    "ice": 120,
     "maze": 75,
     "bonus": 10,
 }
@@ -37,19 +37,27 @@ FIREBALL_SPEED = 260.0
 FIREBALL_DAMAGE = 5.0
 ICE_ACCEL = 260.0
 ICE_FRICTION = 0.88
-ICE_SURVIVE_POINTS = 1
-ICE_SCROLL_SPEED = 240.0
+ICE_SURVIVE_POINTS = 2
+ICE_SCROLL_SPEED = 200.0
+ICE_SCROLL_RAMP = 120.0
 ICE_STRAFE_SPEED = 180.0
-ICE_TREE_TARGET = 70
+ICE_TREE_TARGET = 55
+ICE_TREE_RAMP = 0.6
 ICE_TREE_BUFFER = 160.0
 ICE_TREE_SAFE_RADIUS = 80.0
 ICE_PLAYER_Y = 0.6
-ICE_FLAG_TARGET = 18
+ICE_FINISH_LEAD = 0.8
+ICE_FLAG_TARGET = 14
 ICE_FLAG_POINTS = 10
-YETI_SPEED = 210.0
-YETI_RADIUS = 18.0
-YETI_SPAWN_INTERVAL = 12.0
-YETI_SPAWN_DELAY = 6.0
+LIGHT_HOLDER_POINTS = 5
+LIGHT_AURA_POINTS = 3
+LIGHT_AURA_RADIUS = 180.0
+LIGHT_PASS_RADIUS = 140.0
+LIGHT_HIT_BONUS = 20
+LIGHT_HOLD_DURATION = 20.0
+SNOWBALL_HAZARD_INTERVAL = 2.2
+SNOWBALL_HAZARD_SPEED = 360.0
+SNOWBALL_HAZARD_RADIUS = 20.0
 TREE_RADIUS = 22.0
 TREE_SIZES = {
     "small": {"draw": 32, "radius": 16},
@@ -145,6 +153,24 @@ def _random_spawn(room, index=0):
     x = margin + (index * 70) % (room.width - margin * 2)
     y = margin + ((index * 110) % (room.height - margin * 2))
     return float(x), float(y)
+
+
+def _random_light_position(room):
+    for _ in range(12):
+        x = random.uniform(60, room.width - 60)
+        y = random.uniform(60, room.height - 60)
+        if room.decorations and any(
+            deco.get("type") == "tree"
+            and _circle_hit(x, y, 16, deco["x"], deco["y"], _tree_radius(deco))
+            for deco in room.decorations
+        ):
+            continue
+        if room.players and any(
+            _circle_hit(x, y, 120, player.x, player.y, PLAYER_RADIUS) for player in room.players.values()
+        ):
+            continue
+        return x, y
+    return room.width / 2, room.height / 2
 
 
 def _edge_spawns(room, players, start_angle=0.0, end_angle=2 * math.pi):
@@ -278,6 +304,40 @@ def _spawn_falling_gift(room):
     room.next_item_id += 1
 
 
+def _spawn_big_snowball(room):
+    radius = SNOWBALL_HAZARD_RADIUS
+    side = random.choice(["top", "bottom", "left", "right"])
+    if side == "top":
+        x = random.uniform(40, room.width - 40)
+        y = -radius
+        angle = random.uniform(math.radians(25), math.radians(155))
+    elif side == "bottom":
+        x = random.uniform(40, room.width - 40)
+        y = room.height + radius
+        angle = random.uniform(math.radians(-155), math.radians(-25))
+    elif side == "left":
+        x = -radius
+        y = random.uniform(40, room.height - 40)
+        angle = random.uniform(math.radians(-60), math.radians(60))
+    else:
+        x = room.width + radius
+        y = random.uniform(40, room.height - 40)
+        angle = random.uniform(math.radians(120), math.radians(240))
+    speed = random.uniform(0.85, 1.15) * SNOWBALL_HAZARD_SPEED
+    room.hazards.append(
+        {
+            "id": room.next_item_id,
+            "type": "big_snowball",
+            "x": x,
+            "y": y,
+            "vx": math.cos(angle) * speed,
+            "vy": math.sin(angle) * speed,
+            "radius": radius,
+        }
+    )
+    room.next_item_id += 1
+
+
 def _spawn_maze_gift(room):
     for _ in range(6):
         x = random.uniform(60, room.width - 60)
@@ -324,32 +384,6 @@ def _spawn_monsters(room):
                     "dirY": random.uniform(-1, 1),
                     "wanderUntil": time.time() + random.uniform(1.0, 3.0),
                     "lastShot": 0.0,
-                }
-            )
-            room.next_monster_id += 1
-            break
-
-
-def _spawn_yeti(room, count):
-    if not room.players:
-        return
-    player_y = _ice_player_y(room)
-    for _ in range(count):
-        for _ in range(8):
-            x = random.uniform(80, room.width - 80)
-            y = min(room.height - YETI_RADIUS, player_y + random.uniform(280.0, 520.0))
-            if any(
-                _circle_hit(x, y, YETI_RADIUS, player.x, player.y, PLAYER_RADIUS + 120)
-                for player in room.players.values()
-            ):
-                continue
-            room.monsters.append(
-                {
-                    "id": room.next_monster_id,
-                    "type": "yeti",
-                    "x": x,
-                    "y": y,
-                    "speed": YETI_SPEED,
                 }
             )
             room.next_monster_id += 1
@@ -484,10 +518,29 @@ def _spawn_ice_flag(room, min_y, max_y):
         break
 
 
-def _ice_yeti_limit(room):
-    if not room.players:
-        return 0
-    return max(1, min(5, math.ceil(len(room.players) / 3)))
+def _ice_difficulty(room):
+    duration = max(1.0, float(room.round_duration or 120.0))
+    return max(0.0, min(1.0, room.round_elapsed / duration))
+
+
+def _spawn_ice_finish_line(room):
+    radius = TREE_SIZES["large"]["radius"]
+    spacing = radius * 1.6
+    y = _ice_player_y(room)
+    x = radius
+    while x < room.width - radius:
+        room.decorations.append(
+            {
+                "id": room.next_decoration_id,
+                "type": "tree",
+                "x": x,
+                "y": y,
+                "size": "large",
+            }
+        )
+        room.next_decoration_id += 1
+        x += spacing
+    room.ice_finish_line_spawned = True
 
 
 def _maze_walls(room):
@@ -524,6 +577,8 @@ def _setup_round(room, round_type):
     room.light = {}
     room.hazard_accum = 0.0
     room.gift_accum = 0.0
+    room.round_elapsed = 0.0
+    room.ice_finish_line_spawned = False
     room.round_type = round_type
 
     if round_type == "ice":
@@ -601,7 +656,7 @@ def _setup_round(room, round_type):
         count = max(24, min(140, int(32 * area_factor)))
         _spawn_trees(room, count)
     if round_type == "light":
-        room.light = {"x": room.width / 2, "y": room.height / 2, "holder": ""}
+        room.light = {"x": room.width / 2, "y": room.height / 2, "holder": "", "heldFor": 0.0}
 
 
 def _update_projectiles(room, dt):
@@ -652,6 +707,37 @@ def _remove_projectiles_on_player_hit(room):
                 break
         if not hit:
             remaining.append(projectile)
+    room.projectiles = remaining
+
+
+def _handle_light_projectiles(room):
+    if not room.projectiles:
+        return
+    light = room.light or {}
+    holder_id = light.get("holder") if light else ""
+    remaining = []
+    for projectile in room.projectiles:
+        hit_player = None
+        for player in room.players.values():
+            if not player.alive:
+                continue
+            if _circle_hit(projectile["x"], projectile["y"], PROJECTILE_RADIUS, player.x, player.y, PLAYER_RADIUS):
+                hit_player = player
+                break
+        if not hit_player:
+            remaining.append(projectile)
+            continue
+        if holder_id and hit_player.sid == holder_id:
+            shooter = room.players.get(projectile.get("owner"))
+            if shooter and shooter.sid != holder_id and not shooter.has_light:
+                shooter.score += LIGHT_HIT_BONUS
+                shooter.round_score += LIGHT_HIT_BONUS
+                for player in room.players.values():
+                    player.has_light = False
+                light["holder"] = ""
+                light["heldFor"] = 0.0
+                light["x"], light["y"] = _random_light_position(room)
+                holder_id = ""
     room.projectiles = remaining
 
 
@@ -719,6 +805,36 @@ def _update_snowball(room, dt):
             continue
         _move_with_walls(room, player, dt, PLAYER_SPEED)
 
+    room.hazard_accum += dt
+    while room.hazard_accum >= SNOWBALL_HAZARD_INTERVAL:
+        _spawn_big_snowball(room)
+        room.hazard_accum -= SNOWBALL_HAZARD_INTERVAL
+
+    hazards = []
+    for hazard in room.hazards:
+        hazard["x"] += hazard["vx"] * dt
+        hazard["y"] += hazard["vy"] * dt
+        radius = hazard.get("radius", HAZARD_RADIUS)
+        if (
+            hazard["x"] < -radius
+            or hazard["x"] > room.width + radius
+            or hazard["y"] < -radius
+            or hazard["y"] > room.height + radius
+        ):
+            continue
+        hit = False
+        for player in room.players.values():
+            if not player.alive:
+                continue
+            if _circle_hit(hazard["x"], hazard["y"], radius, player.x, player.y, PLAYER_RADIUS):
+                player.alive = False
+                player.rings_left = 0
+                hit = True
+                break
+        if not hit:
+            hazards.append(hazard)
+    room.hazards = hazards
+
     _update_projectiles(room, dt)
 
     remaining = []
@@ -748,15 +864,10 @@ def _update_snowball(room, dt):
 
 
 def _update_ice(room, dt):
-    scroll = ICE_SCROLL_SPEED * dt
+    difficulty = _ice_difficulty(room)
+    scroll_speed = ICE_SCROLL_SPEED + ICE_SCROLL_RAMP * difficulty
+    scroll = scroll_speed * dt
     player_y = _ice_player_y(room)
-    room.gift_accum += dt
-    if not room.monsters and room.gift_accum >= YETI_SPAWN_DELAY:
-        _spawn_yeti(room, 1)
-        room.gift_accum = 0.0
-    elif room.gift_accum >= YETI_SPAWN_INTERVAL and len(room.monsters) < _ice_yeti_limit(room):
-        _spawn_yeti(room, 1)
-        room.gift_accum = 0.0
 
     for player in room.players.values():
         if not player.alive:
@@ -784,7 +895,8 @@ def _update_ice(room, dt):
         for deco in room.decorations:
             deco["y"] -= scroll
         room.decorations = [deco for deco in room.decorations if deco["y"] > -ICE_TREE_BUFFER]
-    target_trees = _ice_tree_target(room)
+    target_trees = int(_ice_tree_target(room) * (1.0 + ICE_TREE_RAMP * difficulty))
+    target_trees = max(20, min(160, target_trees))
     while len(room.decorations) < target_trees:
         _spawn_ice_tree(room, room.height + ICE_TREE_BUFFER, room.height + ICE_TREE_BUFFER + room.height)
 
@@ -795,28 +907,6 @@ def _update_ice(room, dt):
     target_flags = _ice_flag_target(room)
     while len(room.gifts) < target_flags:
         _spawn_ice_flag(room, room.height + ICE_TREE_BUFFER, room.height + ICE_TREE_BUFFER + room.height)
-
-    for yeti in room.monsters:
-        yeti["y"] -= scroll
-        target = None
-        best_dist = 1e9
-        for player in room.players.values():
-            if not player.alive:
-                continue
-            dx = player.x - yeti["x"]
-            dy = player.y - yeti["y"]
-            dist = math.hypot(dx, dy)
-            if dist < best_dist:
-                best_dist = dist
-                target = player
-        if not target:
-            continue
-        dx = target.x - yeti["x"]
-        dy = target.y - yeti["y"]
-        mag = math.hypot(dx, dy) or 1.0
-        dx /= mag
-        dy /= mag
-        yeti["x"], yeti["y"] = _move_entity(room, yeti["x"], yeti["y"], dx, dy, yeti["speed"], dt, YETI_RADIUS)
 
     if room.gifts:
         remaining_gifts = []
@@ -834,6 +924,9 @@ def _update_ice(room, dt):
                 remaining_gifts.append(gift)
         room.gifts = remaining_gifts
 
+    if not room.ice_finish_line_spawned and room.round_elapsed >= room.round_duration - ICE_FINISH_LEAD:
+        _spawn_ice_finish_line(room)
+
     for player in room.players.values():
         if not player.alive:
             continue
@@ -843,10 +936,6 @@ def _update_ice(room, dt):
                 break
         if not player.alive:
             continue
-        for yeti in room.monsters:
-            if _circle_hit(yeti["x"], yeti["y"], YETI_RADIUS, player.x, player.y, PLAYER_RADIUS):
-                player.alive = False
-                break
 
 
 def _update_maze(room, dt):
@@ -1002,31 +1091,68 @@ def _update_light(room, dt):
 
     if holder_id and holder_id in room.players:
         holder = room.players[holder_id]
-        holder.has_light = True
-        light["x"] = holder.x
-        light["y"] = holder.y
-        holder.score_accum += dt * 3
-        while holder.score_accum >= 1.0:
-            holder.score += 1
-            holder.round_score += 1
-            holder.score_accum -= 1.0
-        for player in room.players.values():
-            if player.sid == holder_id:
-                continue
-            if _circle_hit(player.x, player.y, PLAYER_RADIUS, holder.x, holder.y, PLAYER_RADIUS):
-                holder.has_light = False
-                player.has_light = True
-                light["holder"] = player.sid
-                player.score += 5
-                player.round_score += 5
-                break
+        if not holder.alive:
+            for player in room.players.values():
+                player.has_light = False
+            light["holder"] = ""
+            light["heldFor"] = 0.0
+            light["x"], light["y"] = _random_light_position(room)
+            holder_id = ""
+        else:
+            holder.has_light = True
+            light["x"] = holder.x
+            light["y"] = holder.y
+            light["heldFor"] = light.get("heldFor", 0.0) + dt
+            if light["heldFor"] >= LIGHT_HOLD_DURATION:
+                for player in room.players.values():
+                    player.has_light = False
+                light["holder"] = ""
+                light["heldFor"] = 0.0
+                light["x"], light["y"] = _random_light_position(room)
+                holder_id = ""
+            if holder_id:
+                for player in room.players.values():
+                    if player.sid == holder_id:
+                        continue
+                    if _circle_hit(player.x, player.y, PLAYER_RADIUS, holder.x, holder.y, PLAYER_RADIUS):
+                        holder.has_light = False
+                        player.has_light = True
+                        light["holder"] = player.sid
+                        light["heldFor"] = 0.0
+                        player.score += 5
+                        player.round_score += 5
+                        holder_id = player.sid
+                        break
     else:
+        light["holder"] = ""
+        light["heldFor"] = 0.0
         for player in room.players.values():
             if _circle_hit(player.x, player.y, PLAYER_RADIUS, light["x"], light["y"], 16):
                 light["holder"] = player.sid
                 player.has_light = True
+                light["heldFor"] = 0.0
+                holder_id = player.sid
                 break
-    _remove_projectiles_on_player_hit(room)
+
+    if holder_id and holder_id in room.players:
+        holder = room.players[holder_id]
+        for player in room.players.values():
+            if not player.alive:
+                continue
+            rate = 0.0
+            if player.sid == holder_id:
+                rate = LIGHT_HOLDER_POINTS
+            elif _circle_hit(player.x, player.y, PLAYER_RADIUS, holder.x, holder.y, LIGHT_AURA_RADIUS):
+                rate = LIGHT_AURA_POINTS
+            if rate <= 0:
+                continue
+            player.score_accum += dt * rate
+            while player.score_accum >= 1.0:
+                player.score += 1
+                player.round_score += 1
+                player.score_accum -= 1.0
+
+    _handle_light_projectiles(room)
 
 
 def _update_bonus(room, dt):
@@ -1058,6 +1184,7 @@ def _world_loop():
                     _update_projectiles(room, dt)
                     _remove_projectiles_on_player_hit(room)
                 elif room.status == "in_round":
+                    room.round_elapsed += dt
                     if room.round_type == "survival":
                         _update_survival(room, dt)
                     elif room.round_type == "snowball":
@@ -1072,6 +1199,10 @@ def _world_loop():
                         _update_bonus(room, dt)
                     if room.players and not any(player.alive for player in room.players.values()):
                         end_finished, end_payload = _finish_round(room)
+                    elif room.round_type == "snowball":
+                        alive_teams = {player.team for player in room.players.values() if player.alive}
+                        if len(alive_teams) == 1:
+                            end_finished, end_payload = _finish_round(room)
 
                 payload = _world_payload(room)
             socketio.emit("world_state", payload, to=room.code)
@@ -1237,7 +1368,31 @@ def handle_action(_data=None):
             player.score += 1
             player.round_score += 1
         elif room.round_type == "light":
-            _spawn_snowball(room, player)
+            light = room.light or {}
+            holder_id = light.get("holder") if light else ""
+            if holder_id == player.sid:
+                target = None
+                best_dist = 1e9
+                for other in room.players.values():
+                    if other.sid == player.sid:
+                        continue
+                    if not other.alive:
+                        continue
+                    dx = other.x - player.x
+                    dy = other.y - player.y
+                    dist = math.hypot(dx, dy)
+                    if dist <= LIGHT_PASS_RADIUS and dist < best_dist:
+                        best_dist = dist
+                        target = other
+                if target:
+                    player.has_light = False
+                    target.has_light = True
+                    light["holder"] = target.sid
+                    light["heldFor"] = 0.0
+                    light["x"] = target.x
+                    light["y"] = target.y
+            else:
+                _spawn_snowball(room, player)
         elif room.round_type == "maze":
             _spawn_snowball(room, player)
 
