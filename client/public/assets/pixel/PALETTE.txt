@@ -1,0 +1,32 @@
+Palette (hex)
+- red: #c62828
+- green: #2e7d32
+- dark-green: #1b5e20
+- gold: #f2c14e
+- cream: #fff5e6
+- snow: #ffffff
+- ice: #cfefff
+- blue: #7ec8ff
+- brown: #6d4c41
+- ink: #2a1a12
+
+Player colors
+- red: #e53935
+- orange: #fb8c00
+- yellow: #fdd835
+- lime: #c0ca33
+- green: #43a047
+- teal: #00897b
+- cyan: #00acc1
+- blue: #1e88e5
+- indigo: #3949ab
+- purple: #8e24aa
+- magenta: #d81b60
+- pink: #f06292
+- brown: #6d4c41
+- gray: #546e7a
+- black: #263238
+- white: #ffffff
+
+Extras
+- trophy gold: #f2c14e
