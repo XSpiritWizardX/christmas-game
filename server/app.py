@@ -93,8 +93,17 @@ def _safe_name(raw_name):
     return name[:16]
 
 
+def _next_round_type(room):
+    order = room.round_order or list(ROUND_SEQUENCE)
+    if room.current_round >= len(order):
+        return ""
+    return order[room.current_round]
+
+
 def _room_payload(room):
-    return {"room": state.serialize_room(room)}
+    payload = state.serialize_room(room)
+    payload["nextRoundType"] = _next_round_type(room)
+    return {"room": payload}
 
 
 def _world_payload(room):
@@ -127,6 +136,7 @@ def _world_payload(room):
             "roundEndsAt": room.round_ends_at,
             "maxRounds": room.max_rounds,
             "hostId": room.host_sid,
+            "nextRoundType": _next_round_type(room),
         },
         "world": {
             "width": room.width,

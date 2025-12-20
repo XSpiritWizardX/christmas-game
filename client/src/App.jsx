@@ -52,6 +52,44 @@ const roundName = (roundType) => {
   }
 };
 
+const roundLabel = (roundType) => {
+  switch (roundType) {
+    case "survival":
+      return "Survival";
+    case "snowball":
+      return "Snowball Fight";
+    case "light":
+      return "Carry the Light";
+    case "ice":
+      return "Ice Slide";
+    case "maze":
+      return "Monster Maze";
+    case "bonus":
+      return "Bonus Tap";
+    default:
+      return "Lobby";
+  }
+};
+
+const roundInstruction = (roundType) => {
+  switch (roundType) {
+    case "survival":
+      return "Dodge falling snowflakes and grab candy for points.";
+    case "snowball":
+      return "Players are separated into two teams. Players have three health. Throw snowballs to eliminate the other team. Watch for big snowballs crossing the map.";
+    case "light":
+      return "The christmas light will spawn randomly on the map. Hold the light to score up to twenty seconds; pass it to nearby players. And travel near the light holder for points. If hit, it drops.";
+    case "ice":
+      return "Stay alive on the slope. Avoid trees; points each second.";
+    case "maze":
+      return "Survive monsters and collect gifts before your energy runs out.";
+    case "bonus":
+      return "Tap fast to rack up points.";
+    default:
+      return "Get ready for the next round.";
+  }
+};
+
 const formatTime = (seconds) => {
   if (seconds <= 0) return "0";
   return String(seconds);
@@ -248,6 +286,7 @@ export default function App() {
 
   const isHost = room?.hostId === youId;
   const nextRound = room ? Math.min(room.currentRound + 1, room.maxRounds) : 1;
+  const nextRoundType = room?.nextRoundType || room?.roundType;
   const waitingForHost = room?.status === "between_rounds";
   const inLobby = room?.status === "lobby";
   const topThree = sortedPlayers.slice(0, 3);
@@ -443,8 +482,9 @@ export default function App() {
           {waitingForHost && (
             <div className="overlay">
               <div className="overlay-card">
-                <div className="overlay-title">Waiting for host</div>
-                <div className="overlay-sub">Start round {nextRound} when ready.</div>
+                <div className="overlay-title">Next Round: {roundLabel(nextRoundType)}</div>
+                <div className="overlay-sub">{roundInstruction(nextRoundType)}</div>
+                <div className="overlay-sub">Waiting for host · Start round {nextRound} when ready.</div>
                 {isHost && room.currentRound < room.maxRounds && (
                   <button className="primary" onClick={handleStartRound}>
                     Start round {nextRound}
