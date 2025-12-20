@@ -49,15 +49,16 @@ ICE_PLAYER_Y = 0.6
 ICE_FINISH_LEAD = 0.8
 ICE_FLAG_TARGET = 14
 ICE_FLAG_POINTS = 10
+ICE_START_BUFFER = 5.0
 LIGHT_HOLDER_POINTS = 5
 LIGHT_AURA_POINTS = 3
 LIGHT_AURA_RADIUS = 180.0
 LIGHT_PASS_RADIUS = 140.0
 LIGHT_HIT_BONUS = 20
 LIGHT_HOLD_DURATION = 20.0
-SNOWBALL_HAZARD_INTERVAL = 2.2
+SNOWBALL_HAZARD_INTERVAL = 1.4
 SNOWBALL_HAZARD_SPEED = 360.0
-SNOWBALL_HAZARD_RADIUS = 20.0
+SNOWBALL_HAZARD_RADIUS = 24.0
 TREE_RADIUS = 22.0
 TREE_SIZES = {
     "small": {"draw": 32, "radius": 16},
@@ -579,6 +580,7 @@ def _setup_round(room, round_type):
     room.gift_accum = 0.0
     room.round_elapsed = 0.0
     room.ice_finish_line_spawned = False
+    room.ice_buffer_until = 0.0
     room.round_type = round_type
 
     if round_type == "ice":
@@ -624,6 +626,7 @@ def _setup_round(room, round_type):
         else:
             player.x, player.y = _random_spawn(room, idx)
         if round_type == "ice":
+            player.x = room.width / 2
             player.y = _ice_player_y(room)
         if round_type == "maze":
             player.energy = 45.0
@@ -645,6 +648,7 @@ def _setup_round(room, round_type):
         for _ in range(6):
             _spawn_maze_gift(room)
     if round_type == "ice":
+        room.ice_buffer_until = room.last_update_ts + ICE_START_BUFFER
         tree_target = _ice_tree_target(room)
         for _ in range(tree_target):
             _spawn_ice_tree(room, 0.0, room.height + ICE_TREE_BUFFER)
@@ -931,6 +935,8 @@ def _update_ice(room, dt):
         if not player.alive:
             continue
         for deco in room.decorations:
+            if time.time() < room.ice_buffer_until:
+                break
             if _circle_hit(player.x, player.y, PLAYER_RADIUS, deco["x"], deco["y"], _tree_radius(deco)):
                 player.alive = False
                 break

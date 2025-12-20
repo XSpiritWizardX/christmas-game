@@ -99,6 +99,7 @@ class RoomState:
     round_order: list = field(default_factory=list)
     round_elapsed: float = 0.0
     ice_finish_line_spawned: bool = False
+    ice_buffer_until: float = 0.0
 
 
 class GameState:

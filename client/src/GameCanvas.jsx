@@ -286,6 +286,16 @@ export default function GameCanvas({ world, room, youId, roundType }) {
             ctx.arc(hazard.x, hazard.y, hazard.radius || 20, 0, Math.PI * 2);
             ctx.fill();
           }
+          ctx.strokeStyle = "#1a1a1a";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(hazard.x, hazard.y, (hazard.radius || 20) - 1, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillStyle = "#1a1a1a";
+          ctx.beginPath();
+          ctx.arc(hazard.x - 6, hazard.y - 4, 2, 0, Math.PI * 2);
+          ctx.arc(hazard.x + 5, hazard.y + 3, 2, 0, Math.PI * 2);
+          ctx.fill();
           return;
         }
         if (!drawImage(images?.snowflake, hazard.x, hazard.y, 28)) {
