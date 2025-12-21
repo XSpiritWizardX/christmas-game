@@ -87,6 +87,8 @@ class RoomState:
     gifts: list = field(default_factory=list)
     walls: list = field(default_factory=list)
     light: dict = field(default_factory=dict)
+    trails: list = field(default_factory=list)
+    trail_map: dict = field(default_factory=dict)
     last_update_ts: float = field(default_factory=time.time)
     tick: int = 0
     hazard_accum: float = 0.0

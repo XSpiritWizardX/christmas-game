@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import GameCanvas from "./GameCanvas.jsx";
 import Joystick from "./Joystick.jsx";
@@ -36,15 +36,15 @@ const COLOR_LOOKUP = PLAYER_COLORS.reduce((acc, color) => {
 const roundName = (roundType) => {
   switch (roundType) {
     case "survival":
-      return "Round 1 - Survival";
+      return "Round 5 - Survival";
     case "snowball":
       return "Round 2 - Snowball Fight";
     case "light":
       return "Round 3 - Carry the Light";
     case "ice":
       return "Round 4 - Ice Slide";
-    case "maze":
-      return "Round 5 - Monster Maze";
+    case "trails":
+      return "Round 1 - Glow Trails";
     case "bonus":
       return "Bonus Round - Tap";
     default:
@@ -62,8 +62,8 @@ const roundLabel = (roundType) => {
       return "Carry the Light";
     case "ice":
       return "Ice Slide";
-    case "maze":
-      return "Monster Maze";
+    case "trails":
+      return "Glow Trails";
     case "bonus":
       return "Bonus Tap";
     default:
@@ -81,8 +81,8 @@ const roundInstruction = (roundType) => {
       return "The christmas light will spawn randomly on the map. Hold the light to score up to twenty seconds; pass it to nearby players. And travel near the light holder for points. If hit, it drops.";
     case "ice":
       return "Stay alive on the slope. Avoid trees; points each second.";
-    case "maze":
-      return "Survive monsters and collect gifts before your energy runs out.";
+    case "trails":
+      return "Fill the map with your color. Avoid other trails to survive.";
     case "bonus":
       return "Tap fast to rack up points.";
     default:
@@ -110,6 +110,7 @@ const roomToWorld = (room) => {
     hazards: [],
     gifts: [],
     walls: [],
+    trails: [],
     light: {}
   };
 };
@@ -138,6 +139,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [timeLeft, setTimeLeft] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
 
   useEffect(() => {
     const socket = io(SERVER_URL, { transports: ["websocket", "polling"] });
@@ -232,6 +234,7 @@ export default function App() {
     setYouId("");
     setError("");
     setMenuOpen(false);
+    setLeaderboardOpen(false);
     inputRef.current = { x: 0, y: 0 };
   };
 
@@ -295,14 +298,16 @@ export default function App() {
   const actionLabel = (() => {
     if (!room) return "Action";
     if (room.status === "lobby") return "Throw";
-    if (room.roundType === "snowball" || room.roundType === "light" || room.roundType === "maze")
+    if (room.roundType === "snowball" || room.roundType === "light")
       return "Throw";
     if (room.roundType === "ice") return "Slide";
+    if (room.roundType === "trails") return "Trail";
     if (room.roundType === "bonus") return "Tap!";
     return "Action";
   })();
 
-  const actionDisabled = room?.roundType === "survival" || room?.roundType === "ice";
+  const actionDisabled =
+    room?.roundType === "survival" || room?.roundType === "ice" || room?.roundType === "trails";
 
   return (
     <div className="app">
@@ -391,31 +396,12 @@ export default function App() {
 
           <div className="hud top-right">
             <div className="hud-header">
-              <div className="score-title">Leaderboard</div>
+              <button className="menu-button" onClick={() => setLeaderboardOpen(true)}>
+                Leaderboard
+              </button>
               <button className="menu-button" onClick={() => setMenuOpen(true)}>
                 Menu
               </button>
-            </div>
-            <div className="score-list">
-              {sortedPlayers.map((player) => (
-                <div key={player.id} className="score-row">
-                  <span className="player-name">
-                    <img
-                      src={COLOR_LOOKUP[player.color]?.sprite}
-                      alt=""
-                      className="player-avatar"
-                    />
-                    {player.name}
-                  </span>
-                  {inLobby ? (
-                    <span className={player.ready ? "ready-pill ready" : "ready-pill"}>
-                      {player.ready ? "Ready" : "Not ready"}
-                    </span>
-                  ) : (
-                    <span className="score-value">{player.score}</span>
-                  )}
-                </div>
-              ))}
             </div>
           </div>
 
@@ -575,10 +561,49 @@ export default function App() {
             </div>
           )}
 
+          {leaderboardOpen && (
+            <div className="menu-overlay" onClick={() => setLeaderboardOpen(false)}>
+              <div className="menu-card" onClick={(event) => event.stopPropagation()}>
+                <div className="menu-header">
+                  <div className="menu-title">Leaderboard</div>
+                  <button
+                    className="menu-close"
+                    type="button"
+                    onClick={() => setLeaderboardOpen(false)}
+                    aria-label="Close leaderboard"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="score-list">
+                  {sortedPlayers.map((player) => (
+                    <div key={player.id} className="score-row">
+                      <span className="player-name">
+                        <img
+                          src={COLOR_LOOKUP[player.color]?.sprite}
+                          alt=""
+                          className="player-avatar"
+                        />
+                        {player.name}
+                      </span>
+                      {inLobby ? (
+                        <span className={player.ready ? "ready-pill ready" : "ready-pill"}>
+                          {player.ready ? "Ready" : "Not ready"}
+                        </span>
+                      ) : (
+                        <span className="score-value">{player.score}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && !inLobby && <div className="toast error">{error}</div>}
 
           <div className="hud bottom-left">
-            <Joystick onMove={handleJoystick} />
+            <Joystick onMove={handleJoystick} onAction={handleAction} />
           </div>
 
           <div className="hud bottom-right">

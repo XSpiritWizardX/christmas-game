@@ -13,13 +13,13 @@ app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 state = GameState()
 
-ROUND_SEQUENCE = ["survival", "snowball", "light", "ice", "maze"]
+ROUND_SEQUENCE = ["trails", "snowball", "light", "ice", "survival"]
 ROUND_DURATIONS = {
     "survival": 45,
     "snowball": 120,
     "light": 120,
     "ice": 120,
-    "maze": 75,
+    "trails": 120,
     "bonus": 10,
 }
 BONUS_CHANCE = 0.4
@@ -52,13 +52,17 @@ ICE_FLAG_POINTS = 10
 ICE_START_BUFFER = 5.0
 LIGHT_HOLDER_POINTS = 5
 LIGHT_AURA_POINTS = 3
-LIGHT_AURA_RADIUS = 180.0
+LIGHT_AURA_RADIUS = 130.0
 LIGHT_PASS_RADIUS = 140.0
 LIGHT_HIT_BONUS = 20
 LIGHT_HOLD_DURATION = 20.0
 SNOWBALL_HAZARD_INTERVAL = 1.4
 SNOWBALL_HAZARD_SPEED = 360.0
 SNOWBALL_HAZARD_RADIUS = 24.0
+TRAIL_TILE_SIZE = 16.0
+TRAIL_TILE_POINTS = 1
+TRAIL_START_BUFFER = 2.0
+TRAIL_MAX_POINTS = 100000
 TREE_RADIUS = 22.0
 TREE_SIZES = {
     "small": {"draw": 32, "radius": 16},
@@ -149,6 +153,7 @@ def _world_payload(room):
             "hazards": list(room.hazards),
             "gifts": list(room.gifts),
             "walls": list(room.walls),
+            "trails": list(room.trails),
             "light": dict(room.light) if room.light else {},
         },
     }
@@ -586,6 +591,8 @@ def _setup_round(room, round_type):
     room.gifts = []
     room.walls = []
     room.light = {}
+    room.trails = []
+    room.trail_map = {}
     room.hazard_accum = 0.0
     room.gift_accum = 0.0
     room.round_elapsed = 0.0
@@ -596,7 +603,7 @@ def _setup_round(room, round_type):
     if round_type == "ice":
         room.width = ICE_WIDTH
         room.height = ICE_HEIGHT
-    elif round_type in {"snowball", "maze", "light"}:
+    elif round_type in {"snowball", "light", "trails"}:
         room.width = LARGE_WIDTH
         room.height = LARGE_HEIGHT
     else:
@@ -640,7 +647,7 @@ def _setup_round(room, round_type):
             player.y = _ice_player_y(room)
         if round_type == "maze":
             player.energy = 45.0
-            player.round_score = int(player.energy)
+            player.round_score = 0
         elif round_type == "bonus":
             player.x, player.y = _random_spawn(room, idx)
 
@@ -649,23 +656,18 @@ def _setup_round(room, round_type):
         red_team = [player for player in players if player.team == 1]
         _edge_spawns(room, blue_team, start_angle=math.pi / 2, end_angle=3 * math.pi / 2)
         _edge_spawns(room, red_team, start_angle=-math.pi / 2, end_angle=math.pi / 2)
-    elif round_type in {"maze", "light"}:
+    elif round_type in {"light", "trails"}:
         _edge_spawns(room, players)
 
     if round_type == "maze":
         room.walls = _maze_walls(room)
         _spawn_monsters(room)
-        for _ in range(6):
-            _spawn_maze_gift(room)
     if round_type == "ice":
-        room.ice_buffer_until = room.last_update_ts + ICE_START_BUFFER
-        tree_target = _ice_tree_target(room)
-        for _ in range(tree_target):
-            _spawn_ice_tree(room, 0.0, room.height + ICE_TREE_BUFFER)
+        room.ice_buffer_until = time.time() + ICE_START_BUFFER
         flag_target = _ice_flag_target(room)
         for _ in range(flag_target):
             _spawn_ice_flag(room, 0.0, room.height + ICE_TREE_BUFFER)
-    if round_type in {"snowball", "maze", "light"}:
+    if round_type in {"snowball", "light"}:
         area_factor = (room.width * room.height) / (BASE_WIDTH * BASE_HEIGHT)
         count = max(24, min(140, int(32 * area_factor)))
         _spawn_trees(room, count)
@@ -722,6 +724,118 @@ def _remove_projectiles_on_player_hit(room):
         if not hit:
             remaining.append(projectile)
     room.projectiles = remaining
+
+
+def _add_trail_tile(room, player, tx, ty):
+    size = TRAIL_TILE_SIZE
+    key = (tx, ty)
+    if key in room.trail_map:
+        return False
+    tile = {
+        "x": tx * size,
+        "y": ty * size,
+        "size": size,
+        "color": player.color,
+        "owner": player.sid,
+    }
+    room.trail_map[key] = tile
+    room.trails.append(tile)
+    if len(room.trails) > TRAIL_MAX_POINTS:
+        room.trails = room.trails[-TRAIL_MAX_POINTS:]
+        room.trail_map = {(int(t["x"] // size), int(t["y"] // size)): t for t in room.trails}
+    return True
+
+
+def _trail_coords(player):
+    size = TRAIL_TILE_SIZE
+    return int(player.x // size), int(player.y // size)
+
+
+def _trail_region(room, start_x, start_y, grid_w, grid_h, visited):
+    region = []
+    boundary_owners = set()
+    touches_edge = False
+    stack = [(start_x, start_y)]
+    visited.add((start_x, start_y))
+    while stack:
+        cx, cy = stack.pop()
+        region.append((cx, cy))
+        if cx == 0 or cy == 0 or cx == grid_w - 1 or cy == grid_h - 1:
+            touches_edge = True
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx = cx + dx
+            ny = cy + dy
+            if nx < 0 or ny < 0 or nx >= grid_w or ny >= grid_h:
+                touches_edge = True
+                continue
+            tile = room.trail_map.get((nx, ny))
+            if tile:
+                boundary_owners.add(tile["owner"])
+                continue
+            if (nx, ny) in visited:
+                continue
+            visited.add((nx, ny))
+            stack.append((nx, ny))
+    return region, touches_edge, boundary_owners
+
+
+def _fill_trail_loops(room, player, tx, ty):
+    size = TRAIL_TILE_SIZE
+    grid_w = int(math.ceil(room.width / size))
+    grid_h = int(math.ceil(room.height / size))
+    same_neighbors = 0
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        tile = room.trail_map.get((tx + dx, ty + dy))
+        if tile and tile["owner"] == player.sid:
+            same_neighbors += 1
+    if same_neighbors < 2:
+        return
+    visited = set()
+    points = 0
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        nx = tx + dx
+        ny = ty + dy
+        if nx < 0 or ny < 0 or nx >= grid_w or ny >= grid_h:
+            continue
+        if (nx, ny) in room.trail_map or (nx, ny) in visited:
+            continue
+        region, touches_edge, boundary_owners = _trail_region(room, nx, ny, grid_w, grid_h, visited)
+        if not region or touches_edge:
+            continue
+        if player.sid not in boundary_owners:
+            continue
+        for rx, ry in region:
+            if _add_trail_tile(room, player, rx, ry):
+                points += TRAIL_TILE_POINTS
+    if points:
+        player.score += points
+        player.round_score += points
+
+
+def _update_trails(room, dt):
+    for player in room.players.values():
+        if not player.alive:
+            continue
+        _move_with_walls(room, player, dt, PLAYER_SPEED)
+        if room.round_elapsed >= TRAIL_START_BUFFER:
+            tx, ty = _trail_coords(player)
+            if _add_trail_tile(room, player, tx, ty):
+                player.score += TRAIL_TILE_POINTS
+                player.round_score += TRAIL_TILE_POINTS
+                _fill_trail_loops(room, player, tx, ty)
+
+    if room.round_elapsed < TRAIL_START_BUFFER or not room.trail_map:
+        return
+    size = TRAIL_TILE_SIZE
+    for player in room.players.values():
+        if not player.alive:
+            continue
+        tx = int(player.x // size)
+        ty = int(player.y // size)
+        key = (tx, ty)
+        tile = room.trail_map.get(key)
+        if tile and tile["owner"] != player.sid:
+            player.alive = False
 
 
 def _handle_light_projectiles(room):
@@ -905,14 +1019,22 @@ def _update_ice(room, dt):
             player.round_score += ICE_SURVIVE_POINTS
             player.score_accum -= 1.0
 
-    if room.decorations:
-        for deco in room.decorations:
-            deco["y"] -= scroll
-        room.decorations = [deco for deco in room.decorations if deco["y"] > -ICE_TREE_BUFFER]
-    target_trees = int(_ice_tree_target(room) * (1.0 + ICE_TREE_RAMP * difficulty))
-    target_trees = max(20, min(160, target_trees))
-    while len(room.decorations) < target_trees:
-        _spawn_ice_tree(room, room.height + ICE_TREE_BUFFER, room.height + ICE_TREE_BUFFER + room.height)
+    if time.time() < room.ice_buffer_until:
+        room.decorations = []
+    else:
+        if room.decorations:
+            for deco in room.decorations:
+                deco["y"] -= scroll
+            room.decorations = [deco for deco in room.decorations if deco["y"] > -ICE_TREE_BUFFER]
+        density = max(
+            0.0,
+            min(1.0, (room.round_elapsed - ICE_START_BUFFER) / max(1.0, room.round_duration - ICE_START_BUFFER)),
+        )
+        base_target = _ice_tree_target(room)
+        target_trees = int(base_target * (0.2 + 0.8 * density) * (1.0 + ICE_TREE_RAMP * difficulty))
+        target_trees = max(6, min(200, target_trees))
+        while len(room.decorations) < target_trees:
+            _spawn_ice_tree(room, room.height + ICE_TREE_BUFFER, room.height + ICE_TREE_BUFFER + room.height)
 
     if room.gifts:
         for gift in room.gifts:
@@ -955,38 +1077,13 @@ def _update_ice(room, dt):
 
 
 def _update_maze(room, dt):
-    goal_x = room.width / 2
-    goal_y = room.height / 2
     now = time.time()
-    room.gift_accum += dt
-    if len(room.gifts) < 8 and room.gift_accum >= 2.0:
-        _spawn_maze_gift(room)
-        room.gift_accum = 0.0
-
     _update_projectiles(room, dt)
 
     for player in room.players.values():
         if not player.alive:
             continue
         _move_with_walls(room, player, dt, PLAYER_SPEED)
-        player.energy -= dt
-        if player.energy <= 0:
-            player.energy = 0
-            player.alive = False
-        player.round_score = int(player.energy)
-
-    gifts = []
-    for gift in room.gifts:
-        collected = False
-        for player in room.players.values():
-            if player.alive and _circle_hit(gift["x"], gift["y"], GIFT_RADIUS, player.x, player.y, PLAYER_RADIUS):
-                player.score += MAZE_GIFT_POINTS
-                player.round_score += MAZE_GIFT_POINTS
-                collected = True
-                break
-        if not collected:
-            gifts.append(gift)
-    room.gifts = gifts
 
     remaining_projectiles = []
     for projectile in room.projectiles:
@@ -1085,14 +1182,6 @@ def _update_maze(room, dt):
         if not hit:
             monster_projectiles.append(projectile)
     room.monster_projectiles = monster_projectiles
-
-    for player in room.players.values():
-        if player.alive and _circle_hit(player.x, player.y, PLAYER_RADIUS, goal_x, goal_y, 20):
-            if player.energy > 0:
-                player.score += 20
-                player.round_score += 20
-                player.energy = 0
-                player.alive = False
 
 
 def _update_light(room, dt):
@@ -1211,6 +1300,8 @@ def _world_loop():
                         _update_maze(room, dt)
                     elif room.round_type == "light":
                         _update_light(room, dt)
+                    elif room.round_type == "trails":
+                        _update_trails(room, dt)
                     elif room.round_type == "bonus":
                         _update_bonus(room, dt)
                     if room.players and not any(player.alive for player in room.players.values()):

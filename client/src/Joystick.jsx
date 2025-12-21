@@ -1,8 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
 
-export default function Joystick({ onMove }) {
+const KEY_MOVE = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
+const KEY_ACTION = "Space";
+
+const isTypingTarget = (target) => {
+  if (!target) return false;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+};
+
+export default function Joystick({ onMove, onAction }) {
   const baseRef = useRef(null);
   const pointerIdRef = useRef(null);
+  const keysRef = useRef({ w: false, a: false, s: false, d: false });
   const [knob, setKnob] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
@@ -10,6 +20,21 @@ export default function Joystick({ onMove }) {
     if (!base) return undefined;
 
     const radius = 36;
+    const applyKeys = () => {
+      let dx = 0;
+      let dy = 0;
+      if (keysRef.current.w) dy -= 1;
+      if (keysRef.current.s) dy += 1;
+      if (keysRef.current.a) dx -= 1;
+      if (keysRef.current.d) dx += 1;
+      const mag = Math.hypot(dx, dy);
+      if (mag > 1) {
+        dx /= mag;
+        dy /= mag;
+      }
+      setKnob({ x: dx * radius, y: dy * radius });
+      onMove?.(dx, dy);
+    };
 
     const handlePointerDown = (event) => {
       if (pointerIdRef.current !== null) return;
@@ -47,13 +72,47 @@ export default function Joystick({ onMove }) {
     base.addEventListener("pointerup", handlePointerUp);
     base.addEventListener("pointercancel", handlePointerUp);
 
+    const handleKeyDown = (event) => {
+      if (isTypingTarget(event.target)) return;
+      if (event.code === KEY_ACTION) {
+        event.preventDefault();
+        if (!event.repeat) {
+          onAction?.();
+        }
+        return;
+      }
+      if (!KEY_MOVE.has(event.code)) return;
+      event.preventDefault();
+      if (event.code === "KeyW") keysRef.current.w = true;
+      if (event.code === "KeyA") keysRef.current.a = true;
+      if (event.code === "KeyS") keysRef.current.s = true;
+      if (event.code === "KeyD") keysRef.current.d = true;
+      applyKeys();
+    };
+
+    const handleKeyUp = (event) => {
+      if (isTypingTarget(event.target)) return;
+      if (!KEY_MOVE.has(event.code)) return;
+      event.preventDefault();
+      if (event.code === "KeyW") keysRef.current.w = false;
+      if (event.code === "KeyA") keysRef.current.a = false;
+      if (event.code === "KeyS") keysRef.current.s = false;
+      if (event.code === "KeyD") keysRef.current.d = false;
+      applyKeys();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
     return () => {
       base.removeEventListener("pointerdown", handlePointerDown);
       base.removeEventListener("pointermove", handleMove);
       base.removeEventListener("pointerup", handlePointerUp);
       base.removeEventListener("pointercancel", handlePointerUp);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [onMove]);
+  }, [onAction, onMove]);
 
   return (
     <div ref={baseRef} className="joystick-base" aria-label="Movement joystick">

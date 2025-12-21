@@ -65,6 +65,8 @@ const TEAM_RING = {
   1: "#e53935"
 };
 
+const LIGHT_AURA_RADIUS = 130;
+
 const loadImage = (src) => {
   const img = new Image();
   img.src = src;
@@ -81,6 +83,7 @@ const roomToWorld = (room) => {
     hazards: [],
     gifts: [],
     walls: [],
+    trails: [],
     light: {}
   };
 };
@@ -251,6 +254,15 @@ export default function GameCanvas({ world, room, youId, roundType }) {
       });
     }
 
+    if (snapshot.trails && snapshot.trails.length) {
+      snapshot.trails.forEach((trail) => {
+        const trailColor = COLOR_HEX[trail.color] || "#f2c14e";
+        const size = trail.size || 16;
+        ctx.fillStyle = trailColor;
+        ctx.fillRect(trail.x, trail.y, size, size);
+      });
+    }
+
     const images = assetsRef.current;
     const drawImage = (img, x, y, size) => {
       if (!img || !img.complete) return false;
@@ -369,6 +381,20 @@ export default function GameCanvas({ world, room, youId, roundType }) {
       }
     }
 
+    if (roundType === "light" && snapshot.players) {
+      const holder = snapshot.players.find((player) => player.hasLight);
+      if (holder && Number.isFinite(holder.x) && Number.isFinite(holder.y)) {
+        const auraColor = COLOR_HEX[holder.color] || "#f2c14e";
+        ctx.save();
+        ctx.strokeStyle = `${auraColor}88`;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(holder.x, holder.y, LIGHT_AURA_RADIUS, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
     if (snapshot.players) {
       snapshot.players.forEach((player, index) => {
         const sprite = images?.players?.[player.color];
@@ -423,7 +449,7 @@ export default function GameCanvas({ world, room, youId, roundType }) {
 
     ctx.restore();
 
-    if (roundType && ["maze", "snowball", "light"].includes(roundType)) {
+    if (roundType && ["snowball", "light"].includes(roundType)) {
       const mapPadding = 12;
       let mapWidth = 105;
       let mapHeight = (mapWidth * worldHeight) / worldWidth;
@@ -431,8 +457,17 @@ export default function GameCanvas({ world, room, youId, roundType }) {
         mapHeight = 72;
         mapWidth = (mapHeight * worldWidth) / worldHeight;
       }
-      const mapX = canvas.width - mapWidth - mapPadding;
-      const mapY = (canvas.height < 450 ? 180 : 240) + mapPadding;
+      const compactHud = canvas.height < 520;
+      if (compactHud) {
+        mapWidth = 90;
+        mapHeight = (mapWidth * worldHeight) / worldWidth;
+        if (mapHeight > 78) {
+          mapHeight = 64;
+          mapWidth = (mapHeight * worldWidth) / worldHeight;
+        }
+      }
+      const mapX = compactHud ? mapPadding : canvas.width - mapWidth - mapPadding;
+      const mapY = compactHud ? mapPadding + 86 : (canvas.height < 450 ? 180 : 240) + mapPadding;
 
       ctx.save();
       ctx.fillStyle = "rgba(255, 255, 255, 0.9)";

@@ -326,6 +326,7 @@ button {
   margin-top: 6px;
   display: grid;
   gap: 6px;
+  min-width: 180px;
 }
 
 .score-row {
@@ -336,7 +337,7 @@ button {
   background: rgba(255, 255, 255, 0.9);
   border-radius: 10px;
   padding: 5px 8px;
-  width: 10%;
+  width: 100%;
   font-size: 0.85rem;
 }
 
@@ -386,8 +387,8 @@ button {
 }
 
 .action-button {
-  width: 120px;
-  height: 120px;
+  width: 100px;
+  height: 100px;
   border-radius: 50%;
   background: linear-gradient(135deg, #f77f00, #fcbf49);
   color: #fff;
