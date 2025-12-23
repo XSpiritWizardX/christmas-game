@@ -289,9 +289,21 @@ export default function GameCanvas({ world, room, youId, roundType }) {
     }
 
     if (snapshot.trails && snapshot.trails.length) {
+      const minX = fitsWidth ? 0 : camX - 32;
+      const maxX = fitsWidth ? worldWidth : camX + viewWidth + 32;
+      const minY = fitsHeight ? 0 : camY - 32;
+      const maxY = fitsHeight ? worldHeight : camY + viewHeight + 32;
       snapshot.trails.forEach((trail) => {
-        const trailColor = COLOR_HEX[trail.color] || "#f2c14e";
         const size = trail.size || 16;
+        if (
+          trail.x + size < minX ||
+          trail.x > maxX ||
+          trail.y + size < minY ||
+          trail.y > maxY
+        ) {
+          return;
+        }
+        const trailColor = COLOR_HEX[trail.color] || "#f2c14e";
         ctx.fillStyle = trailColor;
         ctx.fillRect(trail.x, trail.y, size, size);
       });
