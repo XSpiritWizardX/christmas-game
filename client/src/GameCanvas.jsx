@@ -19,6 +19,21 @@ const PLAYER_COLORS = [
   "white"
 ];
 
+const MONSTER_SPRITES = [
+  "monster1",
+  "monster2",
+  "monster3",
+  "monster4",
+  "monster6",
+  "monster7",
+  "monster8",
+  "monster10"
+];
+
+const HERO_SPRITES = {
+  holly: "/assets/custom-heroes/player1.png"
+};
+
 const ASSETS = {
   gift: "/assets/pixel/gift.svg",
   candy: "/assets/pixel/candy-cane.svg",
@@ -153,10 +168,18 @@ export default function GameCanvas({ world, room, youId, roundType }) {
       snowball: loadImage(ASSETS.snowball),
       snowflake: loadImage(ASSETS.snowflake),
       star: loadImage(ASSETS.star),
-      players: {}
+      players: {},
+      monsters: {},
+      heroes: {}
     };
     PLAYER_COLORS.forEach((color) => {
       images.players[color] = loadImage(`/assets/pixel/players/player-${color}.svg`);
+    });
+    MONSTER_SPRITES.forEach((name) => {
+      images.monsters[name] = loadImage(`/assets/monsters/${name}.png`);
+    });
+    Object.entries(HERO_SPRITES).forEach(([key, src]) => {
+      images.heroes[key] = loadImage(src);
     });
     assetsRef.current = images;
   }, []);
@@ -240,10 +263,19 @@ export default function GameCanvas({ world, room, youId, roundType }) {
       worldHeight - outerBorder * 2
     );
 
-    if (roundType === "survival") {
-      ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
-      for (let i = 0; i < 40; i += 1) {
-        ctx.fillRect((i * 80) % worldWidth, (i * 40) % worldHeight, 10, 10);
+    if (roundType === "survival" || roundType === "ice") {
+      ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+      const flakeCount = roundType === "ice" ? 70 : 55;
+      for (let i = 0; i < flakeCount; i += 1) {
+        const seed = (i * 97) % 997;
+        const speed = 18 + (seed % 9);
+        const drift = 12 + (seed % 5);
+        const x = (seed * 19 + now * drift * 60) % worldWidth;
+        const y = (seed * 37 + now * speed * 60) % worldHeight;
+        const size = 2 + (seed % 3);
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
 
@@ -348,14 +380,40 @@ export default function GameCanvas({ world, room, youId, roundType }) {
     if (snapshot.monsters) {
       snapshot.monsters.forEach((monster) => {
         const style = MONSTER_STYLE[monster.type] || MONSTER_STYLE.small;
-        const bob = Math.sin(now * 2 + monster.id) * 1.5;
-        ctx.fillStyle = style.color;
-        ctx.beginPath();
-        ctx.arc(monster.x, monster.y + bob, style.size / 2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#2a1a12";
-        ctx.fillRect(monster.x - 4, monster.y - 6 + bob, 2, 2);
-        ctx.fillRect(monster.x + 2, monster.y - 6 + bob, 2, 2);
+        const spriteName = monster.sprite || monster.type;
+        const img = images?.monsters?.[spriteName];
+        const isBoss = monster.type === "boss";
+        const size = isBoss ? 96 : 60;
+        const bob = Math.sin(now * 2.2 + monster.id) * 2.5;
+        const wobble = Math.sin(now * 3.1 + monster.id) * 0.04;
+        const facing = Number.isFinite(monster.vx)
+          ? monster.vx
+          : Number.isFinite(monster.dirX)
+          ? monster.dirX
+          : 1;
+        const flip = facing < -0.05 ? -1 : 1;
+        if (img && img.complete) {
+          ctx.save();
+          ctx.translate(monster.x, monster.y + bob);
+          ctx.scale(flip * (1 + wobble), 1 - wobble);
+          ctx.drawImage(img, -size / 2, -size / 2, size, size);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = style.color;
+          ctx.beginPath();
+          ctx.arc(monster.x, monster.y + bob, style.size / 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "#2a1a12";
+          ctx.fillRect(monster.x - 4, monster.y - 6 + bob, 2, 2);
+          ctx.fillRect(monster.x + 2, monster.y - 6 + bob, 2, 2);
+        }
+        if (isBoss) {
+          ctx.strokeStyle = "rgba(255, 87, 51, 0.65)";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(monster.x, monster.y + bob, size * 0.48, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       });
     }
 
@@ -397,6 +455,8 @@ export default function GameCanvas({ world, room, youId, roundType }) {
 
     if (snapshot.players) {
       snapshot.players.forEach((player, index) => {
+        const isHolly = (player.name || "").trim().toLowerCase() === "holly";
+        const heroSprite = isHolly ? images?.heroes?.holly : null;
         const sprite = images?.players?.[player.color];
         const size = 44;
         const pixel = size / 16;
@@ -412,13 +472,25 @@ export default function GameCanvas({ world, room, youId, roundType }) {
         const direction = getDirection(player.fx ?? 1, player.fy ?? 0);
         const step = moving ? Math.floor((now * 8 + getSeed(player.id)) % 2) : 0;
         const bob = moving ? Math.round(Math.sin(now * 10 + getSeed(player.id)) * 1) : 0;
+        const heroBob = moving ? Math.sin(now * 10 + getSeed(player.id)) * 2 : 0;
+        const heroWobble = moving ? Math.sin(now * 6 + getSeed(player.id)) * 0.05 : 0;
+        const heroFlip = (player.fx ?? 1) < -0.1 ? -1 : 1;
 
         ctx.globalAlpha = player.alive ? 1 : 0.35;
-        if (!drawImage(sprite, px, py + bob, size)) {
-          ctx.fillStyle = "#2a1a12";
-          ctx.beginPath();
-          ctx.arc(px, py + bob, 14, 0, Math.PI * 2);
-          ctx.fill();
+        if (heroSprite && heroSprite.complete) {
+          const heroSize = 56;
+          ctx.save();
+          ctx.translate(px, py + heroBob);
+          ctx.scale(heroFlip * (1 + heroWobble), 1 - heroWobble);
+          ctx.drawImage(heroSprite, -heroSize / 2, -heroSize / 2, heroSize, heroSize);
+          ctx.restore();
+        } else {
+          if (!drawImage(sprite, px, py + bob, size)) {
+            ctx.fillStyle = "#2a1a12";
+            ctx.beginPath();
+            ctx.arc(px, py + bob, 14, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
         if (roundType === "snowball" && player.alive) {
           const rings = Math.max(0, Math.min(3, player.ringsLeft ?? 0));
@@ -432,7 +504,7 @@ export default function GameCanvas({ world, room, youId, roundType }) {
             }
           }
         }
-        if (player.alive) {
+        if (player.alive && !(heroSprite && heroSprite.complete)) {
           drawFacing(ctx, left, top + bob, pixel, COLOR_HEX[player.color] || "#ffffff", direction);
           drawFeet(ctx, left, top + bob, pixel, "#2a1a12", step, direction);
         }

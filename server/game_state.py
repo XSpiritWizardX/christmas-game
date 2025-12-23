@@ -44,6 +44,7 @@ class PlayerState:
     score: int = 0
     round_score: int = 0
     ready: bool = False
+    is_bot: bool = False
     last_collect_ts: float = 0.0
     last_action_ts: float = 0.0
     last_hit_ts: float = 0.0
@@ -61,6 +62,13 @@ class PlayerState:
     has_light: bool = False
     score_accum: float = 0.0
     rings_left: int = 3
+    ai_next_action_ts: float = 0.0
+    ai_next_decision_ts: float = 0.0
+    ai_target_x: float = 0.0
+    ai_target_y: float = 0.0
+    ai_dir_x: float = 0.0
+    ai_dir_y: float = 0.0
+    ai_idle_until: float = 0.0
 
 
 @dataclass
@@ -102,6 +110,12 @@ class RoomState:
     round_elapsed: float = 0.0
     ice_finish_line_spawned: bool = False
     ice_buffer_until: float = 0.0
+    snowball_boss_active: bool = False
+    snowball_boss_hp: int = 0
+    snowball_boss_max_hp: int = 0
+    snowball_boss_next_attack: float = 0.0
+    snowball_boss_cooldown_until: float = 0.0
+    announcements: list = field(default_factory=list)
 
 
 class GameState:
@@ -157,6 +171,32 @@ class GameState:
             room.players[sid] = player
             return room, None
 
+    def add_bot(self, room, name=None):
+        if room.status != "lobby":
+            return None, "Game already started"
+        if len(room.players) >= MAX_PLAYERS:
+            return None, "Room is full"
+        chosen = self._pick_available_color(room)
+        if not chosen:
+            return None, "No colors available"
+        bot_index = 1 + sum(1 for player in room.players.values() if player.is_bot)
+        bot_name = name or f"AI {bot_index}"
+        sid = f"ai-{room.code}-{int(time.time() * 1000)}-{random.randint(1000, 9999)}"
+        player = PlayerState(sid=sid, name=bot_name, color=chosen, ready=True, is_bot=True)
+        player.x, player.y = self._spawn_position(room, len(room.players))
+        room.players[sid] = player
+        return room, None
+
+    def remove_bot(self, room):
+        if room.status != "lobby":
+            return None, "Game already started"
+        bot_ids = [player.sid for player in room.players.values() if player.is_bot]
+        if not bot_ids:
+            return None, "No AI players to remove"
+        remove_id = bot_ids[-1]
+        del room.players[remove_id]
+        return room, None
+
     def get_room(self, code):
         with self.lock:
             return self.rooms.get(code)
@@ -178,7 +218,14 @@ class GameState:
                 if sid in room.players:
                     del room.players[sid]
                     if room.host_sid == sid:
-                        room.host_sid = next(iter(room.players), "")
+                        next_host = ""
+                        for candidate in room.players.values():
+                            if not candidate.is_bot:
+                                next_host = candidate.sid
+                                break
+                        if not next_host and room.players:
+                            next_host = next(iter(room.players))
+                        room.host_sid = next_host
                     if not room.players:
                         del self.rooms[code]
                         return None
@@ -201,6 +248,7 @@ class GameState:
                     "team": player.team,
                     "alive": player.alive,
                     "ringsLeft": player.rings_left,
+                    "isBot": player.is_bot,
                 }
             )
         return {

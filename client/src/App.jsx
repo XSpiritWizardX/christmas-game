@@ -33,6 +33,22 @@ const COLOR_LOOKUP = PLAYER_COLORS.reduce((acc, color) => {
   return acc;
 }, {});
 
+const MUSIC_TRACKS = {
+  menu: "/assets/audio/menu.wav",
+  lobby: "/assets/audio/lobby.wav",
+  trails: "/assets/audio/round-trails.wav",
+  snowball: "/assets/audio/round-snowball.wav",
+  light: "/assets/audio/round-light.wav",
+  ice: "/assets/audio/round-ice.wav",
+  survival: "/assets/audio/round-survival.wav"
+};
+
+const SFX_TRACKS = {
+  whoosh: "/assets/audio/whoosh.wav",
+  collect: "/assets/audio/collect.wav"
+};
+const SFX_VOLUME = 0.5;
+
 const roundName = (roundType) => {
   switch (roundType) {
     case "survival":
@@ -129,6 +145,13 @@ const mergeWorldWithRoom = (prevWorld, room) => {
 export default function App() {
   const socketRef = useRef(null);
   const inputRef = useRef({ x: 0, y: 0 });
+  const audioRef = useRef(null);
+  const currentTrackRef = useRef("");
+  const sfxRef = useRef({
+    whoosh: { pool: [], index: 0 },
+    collect: { pool: [], index: 0 }
+  });
+  const prevGiftsRef = useRef([]);
   const [connected, setConnected] = useState(false);
   const [name, setName] = useState(defaultName);
   const [roomCode, setRoomCode] = useState("");
@@ -140,6 +163,13 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [needsTap, setNeedsTap] = useState(false);
+  const [announcement, setAnnouncement] = useState(null);
+  const isHollyName =
+    (room?.players?.find((player) => player.id === youId)?.name ?? name)
+      .trim()
+      .toLowerCase() === "holly";
 
   useEffect(() => {
     const socket = io(SERVER_URL, { transports: ["websocket", "polling"] });
@@ -176,6 +206,11 @@ export default function App() {
     socket.on("game_over", (payload) => {
       setRoom(payload.room);
     });
+    socket.on("announcement", (payload) => {
+      const message = payload?.message;
+      if (!message) return;
+      setAnnouncement({ message, duration: payload?.duration || 3 });
+    });
 
     return () => socket.disconnect();
   }, []);
@@ -203,6 +238,74 @@ export default function App() {
     return () => clearInterval(id);
   }, [room?.code]);
 
+  const trackSrc = useMemo(() => {
+    if (!room) return MUSIC_TRACKS.menu;
+    if (room.status === "lobby") return MUSIC_TRACKS.lobby;
+    const roundType = room.roundType || "lobby";
+    return MUSIC_TRACKS[roundType] || MUSIC_TRACKS.lobby;
+  }, [room?.roundType, room?.status]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !trackSrc) return;
+    if (currentTrackRef.current !== trackSrc) {
+      currentTrackRef.current = trackSrc;
+      audio.src = trackSrc;
+      audio.load();
+    }
+    audio.loop = true;
+    audio.volume = 0.5;
+    audio.muted = isMuted;
+    const playPromise = audio.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => setNeedsTap(true));
+    }
+  }, [trackSrc, isMuted]);
+
+  useEffect(() => {
+    const makePool = (src, size = 4) =>
+      Array.from({ length: size }, () => {
+        const audio = new Audio(src);
+        audio.preload = "auto";
+        audio.volume = SFX_VOLUME;
+        return audio;
+      });
+    const whooshPool = makePool(SFX_TRACKS.whoosh, 4);
+    const collectPool = makePool(SFX_TRACKS.collect, 3);
+    sfxRef.current = {
+      whoosh: { pool: whooshPool, index: 0 },
+      collect: { pool: collectPool, index: 0 }
+    };
+    return () => {
+      [...whooshPool, ...collectPool].forEach((audio) => {
+        audio.pause();
+        audio.src = "";
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    Object.values(sfxRef.current).forEach((entry) => {
+      if (!entry.pool) return;
+      entry.pool.forEach((audio) => {
+        audio.muted = isMuted;
+        audio.volume = SFX_VOLUME;
+      });
+    });
+  }, [isMuted]);
+
+  useEffect(() => {
+    if (!needsTap) return;
+    const resume = () => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      audio.muted = isMuted;
+      audio.play().then(() => setNeedsTap(false)).catch(() => {});
+    };
+    window.addEventListener("pointerdown", resume);
+    return () => window.removeEventListener("pointerdown", resume);
+  }, [needsTap, isMuted]);
+
   const you = useMemo(() => {
     return room?.players?.find((player) => player.id === youId);
   }, [room?.players, youId]);
@@ -212,6 +315,36 @@ export default function App() {
       setColorId(you.color);
     }
   }, [you?.color, colorId]);
+
+  useEffect(() => {
+    if (!isHollyName) return;
+    if (colorId !== "black") return;
+    const fallback = PLAYER_COLORS.find((color) => color.id !== "black")?.id;
+    if (fallback) {
+      setColorId(fallback);
+    }
+  }, [colorId, isHollyName]);
+
+  useEffect(() => {
+    if (!you || !room || !isHollyName) return;
+    if (you.color !== "black") return;
+    const taken = new Set(
+      room.players.filter((player) => player.id !== youId).map((player) => player.color)
+    );
+    const fallback = PLAYER_COLORS.find(
+      (color) => color.id !== "black" && !taken.has(color.id)
+    )?.id;
+    if (fallback) {
+      setColorId(fallback);
+      emit("set_color", { color: fallback });
+    }
+  }, [you, room, youId, isHollyName]);
+
+  useEffect(() => {
+    if (!announcement) return undefined;
+    const id = setTimeout(() => setAnnouncement(null), announcement.duration * 1000);
+    return () => clearTimeout(id);
+  }, [announcement]);
 
   const sortedPlayers = useMemo(() => {
     if (!room?.players) return [];
@@ -233,6 +366,7 @@ export default function App() {
     setWorld(null);
     setYouId("");
     setError("");
+    setAnnouncement(null);
     setMenuOpen(false);
     setLeaderboardOpen(false);
     inputRef.current = { x: 0, y: 0 };
@@ -262,12 +396,52 @@ export default function App() {
     emit("start_game");
   };
 
+  const toggleMute = () => {
+    setIsMuted((prev) => !prev);
+  };
+
+  const playSfx = (name) => {
+    const entry = sfxRef.current[name];
+    if (!entry || !entry.pool || entry.pool.length === 0) return;
+    const index = entry.index % entry.pool.length;
+    entry.index += 1;
+    const audio = entry.pool[index];
+    audio.currentTime = 0;
+    audio.muted = isMuted;
+    audio.volume = SFX_VOLUME;
+    audio.play().catch(() => {});
+  };
+  const playWhoosh = () => playSfx("whoosh");
+  const playCollect = () => playSfx("collect");
+
+  const handleAddAi = () => {
+    emit("add_ai");
+  };
+
+  const handleRemoveAi = () => {
+    emit("remove_ai");
+  };
+
   const handleStartRound = () => {
     emit("start_round");
   };
 
   const handleAction = () => {
     emit("action");
+    if (!room) return;
+    if (room.status === "finished") return;
+    const roundType = room.roundType;
+    const isThrowRound =
+      room.status === "lobby" ||
+      room.status === "between_rounds" ||
+      roundType === "snowball" ||
+      roundType === "maze" ||
+      roundType === "light" ||
+      roundType === "survival" ||
+      roundType === "ice";
+    if (isThrowRound && !(roundType === "light" && you?.hasLight)) {
+      playWhoosh();
+    }
   };
 
   const handleLeave = () => {
@@ -277,6 +451,9 @@ export default function App() {
 
   const handleColorPick = (color) => {
     setError("");
+    if (isHollyName && color === "black") {
+      return;
+    }
     setColorId(color);
     if (room?.status === "lobby") {
       emit("set_color", { color });
@@ -300,17 +477,39 @@ export default function App() {
     if (room.status === "lobby") return "Throw";
     if (room.roundType === "snowball" || room.roundType === "light")
       return "Throw";
-    if (room.roundType === "ice") return "Slide";
+    if (room.roundType === "ice" || room.roundType === "survival")
+      return "Throw";
     if (room.roundType === "trails") return "Trail";
     if (room.roundType === "bonus") return "Tap!";
     return "Action";
   })();
 
-  const actionDisabled =
-    room?.roundType === "survival" || room?.roundType === "ice" || room?.roundType === "trails";
+  const actionDisabled = room?.roundType === "trails";
+
+  useEffect(() => {
+    const gifts = world?.gifts || [];
+    const prevGifts = prevGiftsRef.current || [];
+    prevGiftsRef.current = gifts;
+    if (!room || room.status !== "in_round") return;
+    if (!youId) return;
+    if (!prevGifts.length || gifts.length >= prevGifts.length) return;
+    const youPlayer = world?.players?.find((player) => player.id === youId);
+    if (!youPlayer) return;
+    const giftMap = new Map(gifts.map((gift) => [gift.id, gift]));
+    const removed = prevGifts.filter((gift) => !giftMap.has(gift.id));
+    const nearCollected = removed.some((gift) => {
+      const dx = (gift.x ?? 0) - (youPlayer.x ?? 0);
+      const dy = (gift.y ?? 0) - (youPlayer.y ?? 0);
+      return dx * dx + dy * dy < 1600;
+    });
+    if (nearCollected) {
+      playCollect();
+    }
+  }, [world?.gifts, world?.players, room?.status, youId]);
 
   return (
     <div className="app">
+      <audio ref={audioRef} preload="auto" playsInline />
       {!room && (
         <main className="card fade-in lobby-card">
           <div className="lobby-grid">
@@ -356,12 +555,14 @@ export default function App() {
                 <div className="color-grid">
                   {PLAYER_COLORS.map((color) => {
                     const selected = color.id === colorId;
+                    const disabledForHolly = isHollyName && color.id === "black";
                     return (
                       <button
                         key={color.id}
                         type="button"
                         className={selected ? "color-option selected" : "color-option"}
                         onClick={() => handleColorPick(color.id)}
+                        disabled={disabledForHolly}
                         aria-pressed={selected}
                       >
                         <img src={color.sprite} alt="" className="player-avatar" />
@@ -392,6 +593,9 @@ export default function App() {
               Round {room.currentRound} / {room.maxRounds}
             </div>
             {room.roundEndsAt > 0 && <div className="timer-chip">{formatTime(timeLeft)}s</div>}
+            {announcement && (
+              <div className="announcement-banner">{announcement.message}</div>
+            )}
           </div>
 
           <div className="hud top-right">
@@ -425,10 +629,21 @@ export default function App() {
                       <button className="secondary" onClick={handleReadyToggle}>
                         {you?.ready ? "Unready" : "Ready up"}
                       </button>
+                      <button className="secondary" onClick={toggleMute} aria-pressed={isMuted}>
+                        {isMuted ? "Unmute music" : "Mute music"}
+                      </button>
                       {isHost && (
-                        <button className="primary" onClick={handleStart}>
-                          Start game
-                        </button>
+                        <>
+                          <button className="primary" onClick={handleStart}>
+                            Start game
+                          </button>
+                          <button className="secondary" onClick={handleAddAi}>
+                            Add AI
+                          </button>
+                          <button className="ghost" onClick={handleRemoveAi}>
+                            Remove AI
+                          </button>
+                        </>
                       )}
                       <button className="ghost" onClick={handleLeave}>
                         Leave
@@ -441,7 +656,8 @@ export default function App() {
                         {PLAYER_COLORS.map((color) => {
                           const selected = you?.color === color.id || color.id === colorId;
                           const takenByOther = takenColors.has(color.id);
-                          const disabled = takenByOther && !selected;
+                          const disabledForHolly = isHollyName && color.id === "black";
+                          const disabled = (takenByOther && !selected) || disabledForHolly;
                           return (
                             <button
                               key={color.id}
@@ -553,6 +769,9 @@ export default function App() {
                   </button>
                 </div>
                 <div className="menu-actions">
+                  <button className="secondary" onClick={toggleMute} aria-pressed={isMuted}>
+                    {isMuted ? "Unmute music" : "Mute music"}
+                  </button>
                   <button className="ghost" onClick={handleLeave}>
                     Leave game
                   </button>

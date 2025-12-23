@@ -70,6 +70,23 @@ TREE_SIZES = {
     "large": {"draw": 64, "radius": 28},
 }
 
+AI_WANDER_INTERVAL = (0.7, 1.9)
+AI_TARGET_INTERVAL = (1.0, 2.2)
+AI_ACTION_COOLDOWNS = {
+    "snowball": (0.9, 1.6),
+    "maze": (1.0, 1.7),
+    "light": (1.0, 1.8),
+    "bonus": (0.18, 0.28),
+}
+AI_SNOWBALL_RANGE = 420.0
+AI_LIGHT_SHOT_RANGE = 380.0
+AI_MAZE_SHOT_RANGE = 300.0
+AI_IDLE_CHANCE = 0.06
+AI_IDLE_DURATION = (0.2, 0.45)
+AI_WANDER_CHANCE = 0.25
+AI_SHOT_HESITATE_CHANCE = 0.25
+AI_AIM_JITTER = 80.0
+
 BASE_WIDTH = 960
 BASE_HEIGHT = 540
 ICE_WIDTH = 2400
@@ -85,6 +102,28 @@ MONSTER_TYPES = {
     "medium": {"hp": 2, "speed": 85.0, "points": 6},
     "big": {"hp": 4, "speed": 70.0, "points": 10},
 }
+
+MONSTER_SPRITES = [
+    "monster1",
+    "monster3",
+    "monster4",
+    "monster6",
+    "monster7",
+    "monster8",
+]
+ICE_MONSTER_SPRITE = "monster2"
+HAZARD_MONSTER_RADIUS = 18.0
+HAZARD_MONSTER_SPEED = (50.0, 95.0)
+BONUS_MONSTER_SPEED = (30.0, 55.0)
+ICE_MONSTER_RADIUS = 20.0
+ICE_MONSTER_SPEED = 220.0
+ICE_MONSTER_COUNT = 10
+SNOWBALL_BOSS_CHANCE = 0.006
+SNOWBALL_BOSS_MIN_TIME = 12.0
+SNOWBALL_BOSS_HP = 18
+SNOWBALL_BOSS_ATTACK_INTERVAL = 1.2
+SNOWBALL_BOSS_PROJECTILES = 14
+SNOWBALL_BOSS_PROJECTILE_SPEED = 360.0
 
 world_task_started = False
 world_task_lock = threading.Lock()
@@ -129,6 +168,7 @@ def _world_payload(room):
                 "score": player.score,
                 "roundScore": player.round_score,
                 "ringsLeft": player.rings_left,
+                "isBot": player.is_bot,
             }
         )
     payload = {
@@ -223,12 +263,276 @@ def _player_bounds(room, x, y):
     return x, y
 
 
+def _normalize_input(dx, dy):
+    mag = math.hypot(dx, dy)
+    if mag > 1.0:
+        dx /= mag
+        dy /= mag
+    return dx, dy
+
+
+def _set_bot_input(player, dx, dy, speed_scale=1.0):
+    dx, dy = _normalize_input(dx, dy)
+    dx *= speed_scale
+    dy *= speed_scale
+    player.input_x = dx
+    player.input_y = dy
+    if abs(dx) > 0.05 or abs(dy) > 0.05:
+        player.facing_x = dx
+        player.facing_y = dy
+
+
+def _ai_ready_action(player, now, cooldown):
+    if now < player.ai_next_action_ts:
+        return False
+    player.ai_next_action_ts = now + random.uniform(*cooldown)
+    return True
+
+
+def _ai_maybe_idle(player, now):
+    if now < player.ai_idle_until:
+        player.input_x = 0.0
+        player.input_y = 0.0
+        return True
+    if random.random() < AI_IDLE_CHANCE:
+        player.ai_idle_until = now + random.uniform(*AI_IDLE_DURATION)
+        player.input_x = 0.0
+        player.input_y = 0.0
+        return True
+    return False
+
+
+def _ai_aim_noise(dx, dy, amount):
+    return dx + random.uniform(-amount, amount), dy + random.uniform(-amount, amount)
+
+
+def _ai_wander(room, player, now, speed=0.65):
+    if now >= player.ai_next_decision_ts:
+        angle = random.uniform(0.0, math.tau)
+        player.ai_dir_x = math.cos(angle)
+        player.ai_dir_y = math.sin(angle)
+        player.ai_next_decision_ts = now + random.uniform(*AI_WANDER_INTERVAL)
+    _set_bot_input(player, player.ai_dir_x, player.ai_dir_y, speed_scale=speed)
+
+
+def _ai_target_point(room, player, now, margin=80.0, speed=0.75):
+    if now >= player.ai_next_decision_ts or player.ai_target_x <= 0.0:
+        player.ai_target_x = random.uniform(margin, room.width - margin)
+        player.ai_target_y = random.uniform(margin, room.height - margin)
+        player.ai_next_decision_ts = now + random.uniform(*AI_TARGET_INTERVAL)
+    dx = player.ai_target_x - player.x
+    dy = player.ai_target_y - player.y
+    if abs(dx) < 25 and abs(dy) < 25:
+        player.ai_next_decision_ts = 0.0
+    _set_bot_input(player, dx, dy, speed_scale=speed)
+
+
 def _rect_collides_circle(rect, cx, cy, radius):
     return (
         rect["x"] - radius <= cx <= rect["x"] + rect["w"] + radius
         and rect["y"] - radius <= cy <= rect["y"] + rect["h"] + radius
     )
 
+
+def _pick_monster_sprite():
+    return random.choice(MONSTER_SPRITES)
+
+
+def _announce(room, message, duration=4.0):
+    room.announcements.append({"message": message, "duration": duration})
+
+
+def _spawn_roaming_monsters(room, count, speed_range=HAZARD_MONSTER_SPEED):
+    room.monsters = []
+    for _ in range(count):
+        for _ in range(10):
+            x = random.uniform(80, room.width - 80)
+            y = random.uniform(80, room.height - 80)
+            if room.decorations and any(
+                deco.get("type") == "tree"
+                and _circle_hit(x, y, HAZARD_MONSTER_RADIUS + 6, deco["x"], deco["y"], _tree_radius(deco))
+                for deco in room.decorations
+            ):
+                continue
+            angle = random.uniform(0.0, math.tau)
+            speed = random.uniform(*speed_range)
+            room.monsters.append(
+                {
+                    "id": room.next_monster_id,
+                    "type": "hazard",
+                    "sprite": _pick_monster_sprite(),
+                    "x": x,
+                    "y": y,
+                    "vx": math.cos(angle) * speed,
+                    "vy": math.sin(angle) * speed,
+                    "radius": HAZARD_MONSTER_RADIUS,
+                }
+            )
+            room.next_monster_id += 1
+            break
+
+
+def _update_roaming_monsters(room, dt):
+    if not room.monsters:
+        return
+    for monster in room.monsters:
+        if monster.get("type") != "hazard":
+            continue
+        monster["x"] += monster.get("vx", 0.0) * dt
+        monster["y"] += monster.get("vy", 0.0) * dt
+        radius = monster.get("radius", HAZARD_MONSTER_RADIUS)
+        if monster["x"] <= radius or monster["x"] >= room.width - radius:
+            monster["vx"] = -monster.get("vx", 0.0)
+        if monster["y"] <= radius or monster["y"] >= room.height - radius:
+            monster["vy"] = -monster.get("vy", 0.0)
+        monster["x"] = _clamp(monster["x"], radius, room.width - radius)
+        monster["y"] = _clamp(monster["y"], radius, room.height - radius)
+
+
+def _handle_projectiles_on_hazard_monsters(room):
+    if not room.projectiles or not room.monsters:
+        return
+    removed_ids = set()
+    remaining_projectiles = []
+    for projectile in room.projectiles:
+        hit = False
+        for monster in room.monsters:
+            if monster.get("type") not in {"hazard", "ice"}:
+                continue
+            if monster.get("id") in removed_ids:
+                continue
+            radius = monster.get("radius", HAZARD_MONSTER_RADIUS)
+            if _circle_hit(projectile["x"], projectile["y"], PROJECTILE_RADIUS, monster["x"], monster["y"], radius):
+                removed_ids.add(monster.get("id"))
+                hit = True
+                break
+        if not hit:
+            remaining_projectiles.append(projectile)
+    if removed_ids:
+        room.monsters = [monster for monster in room.monsters if monster.get("id") not in removed_ids]
+    room.projectiles = remaining_projectiles
+
+
+def _spawn_ice_monsters(room, count=ICE_MONSTER_COUNT):
+    room.monsters = []
+    for _ in range(count):
+        direction = random.choice([-1.0, 1.0])
+        x = random.uniform(60, room.width - 60)
+        y = random.uniform(-room.height * 0.4, room.height * 0.4)
+        room.monsters.append(
+            {
+                "id": room.next_monster_id,
+                "type": "ice",
+                "sprite": ICE_MONSTER_SPRITE,
+                "x": x,
+                "y": y,
+                "vx": direction * ICE_MONSTER_SPEED,
+                "vy": ICE_MONSTER_SPEED,
+                "radius": ICE_MONSTER_RADIUS,
+            }
+        )
+        room.next_monster_id += 1
+
+
+def _update_ice_monsters(room, dt):
+    if not room.monsters:
+        return
+    for monster in room.monsters:
+        if monster.get("type") != "ice":
+            continue
+        monster["x"] += monster.get("vx", 0.0) * dt
+        monster["y"] += monster.get("vy", 0.0) * dt
+        radius = monster.get("radius", ICE_MONSTER_RADIUS)
+        if monster["x"] < -radius or monster["x"] > room.width + radius:
+            monster["vx"] = -monster.get("vx", 0.0)
+        if monster["y"] > room.height + radius:
+            monster["y"] = -radius * 2
+            monster["x"] = random.uniform(60, room.width - 60)
+
+
+def _handle_monster_collisions(room, radius_key="radius"):
+    if not room.monsters:
+        return
+    for monster in room.monsters:
+        if monster.get("type") not in {"hazard", "ice", "boss"}:
+            continue
+        radius = monster.get(radius_key, HAZARD_MONSTER_RADIUS)
+        for player in room.players.values():
+            if not player.alive:
+                continue
+            if _circle_hit(monster["x"], monster["y"], radius, player.x, player.y, PLAYER_RADIUS):
+                if room.round_type == "snowball":
+                    player.rings_left = max(0, player.rings_left - 1)
+                    if player.rings_left == 0:
+                        player.alive = False
+                else:
+                    player.alive = False
+
+
+def _spawn_snowball_boss(room, now):
+    boss = {
+        "id": room.next_monster_id,
+        "type": "boss",
+        "sprite": "monster10",
+        "x": room.width / 2,
+        "y": room.height / 2,
+        "radius": 34.0,
+        "hp": SNOWBALL_BOSS_HP,
+        "maxHp": SNOWBALL_BOSS_HP,
+        "lastBurst": 0.0,
+    }
+    room.next_monster_id += 1
+    room.monsters.append(boss)
+    room.snowball_boss_active = True
+    room.snowball_boss_hp = SNOWBALL_BOSS_HP
+    room.snowball_boss_max_hp = SNOWBALL_BOSS_HP
+    room.snowball_boss_next_attack = now + SNOWBALL_BOSS_ATTACK_INTERVAL
+    room.snowball_boss_cooldown_until = max(room.round_ends_at, now + 5.0)
+    _announce(room, "Boss spotted! Team up to take it down.", duration=4.5)
+
+
+def _spawn_boss_volley(room, boss, now):
+    count = SNOWBALL_BOSS_PROJECTILES
+    angle_offset = (boss.get("lastBurst", 0.0) * 0.7) % (math.tau)
+    for idx in range(count):
+        angle = angle_offset + idx * (math.tau / count)
+        room.projectiles.append(
+            {
+                "id": room.next_projectile_id,
+                "x": boss["x"],
+                "y": boss["y"],
+                "vx": math.cos(angle) * SNOWBALL_BOSS_PROJECTILE_SPEED,
+                "vy": math.sin(angle) * SNOWBALL_BOSS_PROJECTILE_SPEED,
+                "color": "white",
+                "owner": "boss",
+                "life": 0.0,
+            }
+        )
+        room.next_projectile_id += 1
+    boss["lastBurst"] = now
+
+
+def _update_snowball_boss(room, now):
+    if not room.snowball_boss_active:
+        return
+    boss = next((m for m in room.monsters if m.get("type") == "boss"), None)
+    if not boss:
+        room.snowball_boss_active = False
+        return
+    if now >= room.snowball_boss_next_attack:
+        _spawn_boss_volley(room, boss, now)
+        room.snowball_boss_next_attack = now + SNOWBALL_BOSS_ATTACK_INTERVAL
+
+
+def _maybe_spawn_snowball_boss(room, now, dt):
+    if room.snowball_boss_active:
+        return
+    if room.round_elapsed < SNOWBALL_BOSS_MIN_TIME:
+        return
+    if now < room.snowball_boss_cooldown_until:
+        return
+    if random.random() < SNOWBALL_BOSS_CHANCE * max(0.0, dt):
+        _spawn_snowball_boss(room, now)
 
 def _move_with_walls(room, player, dt, speed):
     dx = player.input_x
@@ -293,6 +597,59 @@ def _spawn_snowball(room, player):
     }
     room.next_projectile_id += 1
     room.projectiles.append(projectile)
+
+
+def _spawn_snowball_dir(room, player, dx, dy):
+    player.facing_x = dx
+    player.facing_y = dy
+    _spawn_snowball(room, player)
+
+
+def _perform_action(room, player):
+    if room.status in {"lobby", "between_rounds"}:
+        _spawn_snowball(room, player)
+        return
+    if room.status != "in_round":
+        return
+    if room.round_type == "snowball":
+        _spawn_snowball(room, player)
+    elif room.round_type in {"survival", "ice"}:
+        _spawn_snowball_dir(room, player, 0.0, -1.0)
+    elif room.round_type == "bonus":
+        now = time.time()
+        if now - player.last_action_ts < 0.15:
+            return
+        player.last_action_ts = now
+        player.score += 1
+        player.round_score += 1
+    elif room.round_type == "light":
+        light = room.light or {}
+        holder_id = light.get("holder") if light else ""
+        if holder_id == player.sid:
+            target = None
+            best_dist = 1e9
+            for other in room.players.values():
+                if other.sid == player.sid:
+                    continue
+                if not other.alive:
+                    continue
+                dx = other.x - player.x
+                dy = other.y - player.y
+                dist = math.hypot(dx, dy)
+                if dist <= LIGHT_PASS_RADIUS and dist < best_dist:
+                    best_dist = dist
+                    target = other
+            if target:
+                player.has_light = False
+                target.has_light = True
+                light["holder"] = target.sid
+                light["heldFor"] = 0.0
+                light["x"] = target.x
+                light["y"] = target.y
+        else:
+            _spawn_snowball(room, player)
+    elif room.round_type == "maze":
+        _spawn_snowball(room, player)
 
 
 def _spawn_hazard(room):
@@ -391,6 +748,7 @@ def _spawn_monsters(room):
                 {
                     "id": room.next_monster_id,
                     "type": mtype,
+                    "sprite": _pick_monster_sprite(),
                     "x": x,
                     "y": y,
                     "hp": cfg["hp"],
@@ -599,6 +957,12 @@ def _setup_round(room, round_type):
     room.ice_finish_line_spawned = False
     room.ice_buffer_until = 0.0
     room.round_type = round_type
+    room.snowball_boss_active = False
+    room.snowball_boss_hp = 0
+    room.snowball_boss_max_hp = 0
+    room.snowball_boss_next_attack = 0.0
+    room.snowball_boss_cooldown_until = 0.0
+    room.announcements = []
 
     if round_type == "ice":
         room.width = ICE_WIDTH
@@ -635,6 +999,14 @@ def _setup_round(room, round_type):
         player.last_hit_ts = 0.0
         player.vel_x = 0.0
         player.vel_y = 0.0
+        if player.is_bot:
+            player.ai_next_action_ts = 0.0
+            player.ai_next_decision_ts = 0.0
+            player.ai_target_x = 0.0
+            player.ai_target_y = 0.0
+            player.ai_dir_x = 0.0
+            player.ai_dir_y = 0.0
+            player.ai_idle_until = 0.0
 
         if round_type == "survival":
             spacing = room.width / (len(players) + 1)
@@ -667,12 +1039,17 @@ def _setup_round(room, round_type):
         flag_target = _ice_flag_target(room)
         for _ in range(flag_target):
             _spawn_ice_flag(room, 0.0, room.height + ICE_TREE_BUFFER)
+        _spawn_ice_monsters(room, ICE_MONSTER_COUNT)
     if round_type in {"snowball", "light"}:
         area_factor = (room.width * room.height) / (BASE_WIDTH * BASE_HEIGHT)
         count = max(24, min(140, int(32 * area_factor)))
         _spawn_trees(room, count)
     if round_type == "light":
         room.light = {"x": room.width / 2, "y": room.height / 2, "holder": "", "heldFor": 0.0}
+    if round_type in {"survival", "snowball", "light", "trails", "bonus"}:
+        base = max(2, min(8, len(players) + 1))
+        speed_range = BONUS_MONSTER_SPEED if round_type == "bonus" else HAZARD_MONSTER_SPEED
+        _spawn_roaming_monsters(room, base, speed_range=speed_range)
 
 
 def _update_projectiles(room, dt):
@@ -837,6 +1214,9 @@ def _update_trails(room, dt):
         if tile and tile["owner"] != player.sid:
             player.alive = False
 
+    _update_roaming_monsters(room, dt)
+    _handle_monster_collisions(room)
+
 
 def _handle_light_projectiles(room):
     if not room.projectiles:
@@ -867,6 +1247,244 @@ def _handle_light_projectiles(room):
                 light["x"], light["y"] = _random_light_position(room)
                 holder_id = ""
     room.projectiles = remaining
+
+
+def _update_ai(room, now):
+    if not room.players:
+        return
+    light = room.light or {}
+    holder_id = light.get("holder") if light else ""
+    for player in room.players.values():
+        if not player.is_bot:
+            continue
+        if room.status == "in_round" and not player.alive:
+            player.input_x = 0.0
+            player.input_y = 0.0
+            continue
+        if room.status in {"lobby", "between_rounds"}:
+            _ai_wander(room, player, now)
+            continue
+        if room.status != "in_round":
+            player.input_x = 0.0
+            player.input_y = 0.0
+            continue
+        if _ai_maybe_idle(player, now):
+            continue
+
+        if room.round_type == "survival":
+            if random.random() < AI_WANDER_CHANCE:
+                _ai_wander(room, player, now, speed=0.5)
+                continue
+            target_dx = 0.0
+            nearest_hazard = None
+            nearest_dist = 1e9
+            for hazard in room.hazards:
+                if hazard["y"] < player.y - 160:
+                    continue
+                dist = abs(hazard["x"] - player.x)
+                if dist < nearest_dist:
+                    nearest_dist = dist
+                    nearest_hazard = hazard
+            if nearest_hazard and nearest_dist < 80 and random.random() > 0.25:
+                target_dx = -1.0 if nearest_hazard["x"] > player.x else 1.0
+            else:
+                nearest_gift = None
+                gift_dist = 1e9
+                for gift in room.gifts:
+                    dist = abs(gift["x"] - player.x) + abs(gift["y"] - player.y)
+                    if dist < gift_dist:
+                        gift_dist = dist
+                        nearest_gift = gift
+                if nearest_gift:
+                    target_dx = nearest_gift["x"] - player.x
+                else:
+                    target_dx = room.width / 2 - player.x
+            _set_bot_input(player, target_dx, 0.0, speed_scale=0.7)
+            continue
+
+        if room.round_type == "snowball":
+            if random.random() < AI_WANDER_CHANCE:
+                _ai_wander(room, player, now, speed=0.6)
+                continue
+            target = None
+            best_dist = 1e9
+            for other in room.players.values():
+                if other.sid == player.sid or not other.alive:
+                    continue
+                if other.team == player.team:
+                    continue
+                dx = other.x - player.x
+                dy = other.y - player.y
+                dist = math.hypot(dx, dy)
+                if dist < best_dist:
+                    best_dist = dist
+                    target = other
+            if target:
+                dx = target.x - player.x
+                dy = target.y - player.y
+                aim_dx = dx
+                aim_dy = dy
+                if best_dist < 120 and random.random() > 0.35:
+                    dx = -dx
+                    dy = -dy
+                _set_bot_input(player, dx, dy, speed_scale=0.8)
+                if best_dist < AI_SNOWBALL_RANGE and _ai_ready_action(
+                    player, now, AI_ACTION_COOLDOWNS["snowball"]
+                ):
+                    if random.random() >= AI_SHOT_HESITATE_CHANCE:
+                        aim_dx, aim_dy = _ai_aim_noise(aim_dx, aim_dy, AI_AIM_JITTER)
+                        aim_dx, aim_dy = _normalize_input(aim_dx, aim_dy)
+                        if abs(aim_dx) > 0.05 or abs(aim_dy) > 0.05:
+                            player.facing_x = aim_dx
+                            player.facing_y = aim_dy
+                        _perform_action(room, player)
+            else:
+                _ai_wander(room, player, now, speed=0.6)
+            continue
+
+        if room.round_type == "light":
+            if holder_id == player.sid:
+                if random.random() < AI_WANDER_CHANCE:
+                    _ai_wander(room, player, now, speed=0.6)
+                    continue
+                nearest = None
+                best_dist = 1e9
+                for other in room.players.values():
+                    if other.sid == player.sid or not other.alive:
+                        continue
+                    dx = other.x - player.x
+                    dy = other.y - player.y
+                    dist = math.hypot(dx, dy)
+                    if dist < best_dist:
+                        best_dist = dist
+                        nearest = other
+                if nearest:
+                    _set_bot_input(
+                        player,
+                        player.x - nearest.x,
+                        player.y - nearest.y,
+                        speed_scale=0.85,
+                    )
+                else:
+                    _ai_wander(room, player, now, speed=0.6)
+            else:
+                if random.random() < AI_WANDER_CHANCE:
+                    _ai_wander(room, player, now, speed=0.6)
+                    continue
+                target_x = None
+                target_y = None
+                if holder_id and holder_id in room.players:
+                    holder = room.players[holder_id]
+                    target_x = holder.x
+                    target_y = holder.y
+                elif light:
+                    target_x = light.get("x")
+                    target_y = light.get("y")
+                if target_x is not None and target_y is not None:
+                    dx = target_x - player.x
+                    dy = target_y - player.y
+                    _set_bot_input(player, dx, dy, speed_scale=0.85)
+                    dist = math.hypot(dx, dy)
+                    if dist < AI_LIGHT_SHOT_RANGE and _ai_ready_action(
+                        player, now, AI_ACTION_COOLDOWNS["light"]
+                    ):
+                        if random.random() >= AI_SHOT_HESITATE_CHANCE:
+                            aim_dx, aim_dy = _ai_aim_noise(dx, dy, AI_AIM_JITTER)
+                            aim_dx, aim_dy = _normalize_input(aim_dx, aim_dy)
+                            if abs(aim_dx) > 0.05 or abs(aim_dy) > 0.05:
+                                player.facing_x = aim_dx
+                                player.facing_y = aim_dy
+                            _perform_action(room, player)
+                else:
+                    _ai_wander(room, player, now, speed=0.6)
+            continue
+
+        if room.round_type == "maze":
+            if random.random() < AI_WANDER_CHANCE:
+                _ai_wander(room, player, now, speed=0.6)
+                continue
+            target = None
+            best_dist = 1e9
+            for monster in room.monsters:
+                dx = monster["x"] - player.x
+                dy = monster["y"] - player.y
+                dist = math.hypot(dx, dy)
+                if dist < best_dist:
+                    best_dist = dist
+                    target = monster
+            if target:
+                dx = target["x"] - player.x
+                dy = target["y"] - player.y
+                aim_dx = dx
+                aim_dy = dy
+                if best_dist < 90 and random.random() > 0.35:
+                    dx = -dx
+                    dy = -dy
+                _set_bot_input(player, dx, dy, speed_scale=0.8)
+                if best_dist < AI_MAZE_SHOT_RANGE and _ai_ready_action(
+                    player, now, AI_ACTION_COOLDOWNS["maze"]
+                ):
+                    if random.random() >= AI_SHOT_HESITATE_CHANCE:
+                        aim_dx, aim_dy = _ai_aim_noise(aim_dx, aim_dy, AI_AIM_JITTER)
+                        aim_dx, aim_dy = _normalize_input(aim_dx, aim_dy)
+                        if abs(aim_dx) > 0.05 or abs(aim_dy) > 0.05:
+                            player.facing_x = aim_dx
+                            player.facing_y = aim_dy
+                        _perform_action(room, player)
+            else:
+                _ai_wander(room, player, now, speed=0.6)
+            continue
+
+        if room.round_type == "trails":
+            if random.random() < AI_WANDER_CHANCE:
+                _ai_wander(room, player, now, speed=0.6)
+            else:
+                _ai_target_point(room, player, now, speed=0.7)
+            continue
+
+        if room.round_type == "ice":
+            nearest_tree = None
+            nearest_dist = 1e9
+            for deco in room.decorations:
+                if deco.get("type") != "tree":
+                    continue
+                if abs(deco["y"] - player.y) > 90:
+                    continue
+                dist = abs(deco["x"] - player.x)
+                if dist < nearest_dist:
+                    nearest_dist = dist
+                    nearest_tree = deco
+            if nearest_tree and nearest_dist < 70 and random.random() > 0.25:
+                _set_bot_input(
+                    player,
+                    -1.0 if nearest_tree["x"] > player.x else 1.0,
+                    0.0,
+                    speed_scale=0.75,
+                )
+            else:
+                nearest_gift = None
+                gift_dist = 1e9
+                for gift in room.gifts:
+                    dist = abs(gift["x"] - player.x)
+                    if dist < gift_dist:
+                        gift_dist = dist
+                        nearest_gift = gift
+                if nearest_gift:
+                    _set_bot_input(player, nearest_gift["x"] - player.x, 0.0, speed_scale=0.75)
+                else:
+                    _set_bot_input(player, room.width / 2 - player.x, 0.0, speed_scale=0.75)
+            continue
+
+        if room.round_type == "bonus":
+            player.input_x = 0.0
+            player.input_y = 0.0
+            if _ai_ready_action(player, now, AI_ACTION_COOLDOWNS["bonus"]):
+                if random.random() < AI_SHOT_HESITATE_CHANCE:
+                    continue
+                _perform_action(room, player)
+            continue
+
+        _ai_wander(room, player, now, speed=0.6)
 
 
 def _update_lobby(room, dt):
@@ -926,12 +1544,21 @@ def _update_survival(room, dt):
             gifts.append(gift)
     room.gifts = gifts
 
+    _update_projectiles(room, dt)
+    _handle_projectiles_on_hazard_monsters(room)
+    _update_roaming_monsters(room, dt)
+    _handle_monster_collisions(room)
+
 
 def _update_snowball(room, dt):
+    now = time.time()
     for player in room.players.values():
         if not player.alive:
             continue
         _move_with_walls(room, player, dt, PLAYER_SPEED)
+
+    _update_roaming_monsters(room, dt)
+    _handle_monster_collisions(room)
 
     room.hazard_accum += dt
     while room.hazard_accum >= SNOWBALL_HAZARD_INTERVAL:
@@ -963,13 +1590,28 @@ def _update_snowball(room, dt):
             hazards.append(hazard)
     room.hazards = hazards
 
+    _maybe_spawn_snowball_boss(room, now, dt)
+    _update_snowball_boss(room, now)
+
     _update_projectiles(room, dt)
+    _handle_projectiles_on_hazard_monsters(room)
 
     remaining = []
     for projectile in room.projectiles:
         hit = False
         shooter = room.players.get(projectile["owner"])
         if not shooter:
+            if projectile.get("owner") == "boss":
+                for player in room.players.values():
+                    if not player.alive:
+                        continue
+                    if _circle_hit(projectile["x"], projectile["y"], PROJECTILE_RADIUS, player.x, player.y, PLAYER_RADIUS):
+                        player.rings_left = 0
+                        player.alive = False
+                        hit = True
+                        break
+                if not hit:
+                    remaining.append(projectile)
             continue
         for player in room.players.values():
             if player.sid == projectile["owner"]:
@@ -989,6 +1631,27 @@ def _update_snowball(room, dt):
         if not hit:
             remaining.append(projectile)
     room.projectiles = remaining
+
+    boss = next((monster for monster in room.monsters if monster.get("type") == "boss"), None)
+    if boss:
+        remaining = []
+        for projectile in room.projectiles:
+            if projectile.get("owner") == "boss":
+                remaining.append(projectile)
+                continue
+            if _circle_hit(projectile["x"], projectile["y"], PROJECTILE_RADIUS, boss["x"], boss["y"], boss["radius"]):
+                shooter = room.players.get(projectile.get("owner"))
+                if shooter:
+                    shooter.score += 3
+                    shooter.round_score += 3
+                boss["hp"] = max(0, boss.get("hp", SNOWBALL_BOSS_HP) - 1)
+            else:
+                remaining.append(projectile)
+        room.projectiles = remaining
+        if boss.get("hp", 0) <= 0:
+            room.monsters = [monster for monster in room.monsters if monster.get("type") != "boss"]
+            room.snowball_boss_active = False
+            _announce(room, "Boss defeated! Bonus points!", duration=3.5)
 
 
 def _update_ice(room, dt):
@@ -1075,6 +1738,11 @@ def _update_ice(room, dt):
         if not player.alive:
             continue
 
+    _update_projectiles(room, dt)
+    _handle_projectiles_on_hazard_monsters(room)
+    _update_ice_monsters(room, dt)
+    _handle_monster_collisions(room)
+
 
 def _update_maze(room, dt):
     now = time.time()
@@ -1122,6 +1790,8 @@ def _update_maze(room, dt):
             mag = math.hypot(dx, dy) or 1.0
             dx /= mag
             dy /= mag
+            monster["dirX"] = dx
+            monster["dirY"] = dy
             monster["x"], monster["y"] = _move_entity(
                 room, monster["x"], monster["y"], dx, dy, monster["speed"], dt, 16
             )
@@ -1186,6 +1856,7 @@ def _update_maze(room, dt):
 
 def _update_light(room, dt):
     _update_projectiles(room, dt)
+    _handle_projectiles_on_hazard_monsters(room)
     for player in room.players.values():
         _move_with_walls(room, player, dt, PLAYER_SPEED)
 
@@ -1258,12 +1929,17 @@ def _update_light(room, dt):
                 player.score_accum -= 1.0
 
     _handle_light_projectiles(room)
+    _update_roaming_monsters(room, dt)
+    _handle_monster_collisions(room)
 
 
 def _update_bonus(room, dt):
     for player in room.players.values():
         player.x = room.width / 2
         player.y = room.height / 2
+
+    _update_roaming_monsters(room, dt)
+    _handle_monster_collisions(room)
 
 
 def _world_loop():
@@ -1283,6 +1959,7 @@ def _world_loop():
                     dt = 0.2
                 room.last_update_ts = now
                 room.tick += 1
+                _update_ai(room, now)
 
                 if room.status in {"lobby", "between_rounds"}:
                     _update_lobby(room, dt)
@@ -1312,7 +1989,12 @@ def _world_loop():
                             end_finished, end_payload = _finish_round(room)
 
                 payload = _world_payload(room)
+                announcements = list(room.announcements)
+                room.announcements = []
             socketio.emit("world_state", payload, to=room.code)
+            if announcements:
+                for announcement in announcements:
+                    socketio.emit("announcement", announcement, to=room.code)
             if end_payload:
                 if end_finished:
                     socketio.emit("game_over", end_payload, to=room.code)
@@ -1441,6 +2123,40 @@ def handle_set_color(data):
         socketio.emit("room_update", _room_payload(room), to=room.code)
 
 
+@socketio.on("add_ai")
+def handle_add_ai(_data=None):
+    room = state.get_room_by_player(request.sid)
+    if not room:
+        emit("server_error", {"message": "Room not found"})
+        return
+    if room.host_sid != request.sid:
+        emit("server_error", {"message": "Only the host can add AI"})
+        return
+    with room.lock:
+        updated, error = state.add_bot(room)
+        if error:
+            emit("server_error", {"message": error})
+            return
+    socketio.emit("room_update", _room_payload(updated), to=room.code)
+
+
+@socketio.on("remove_ai")
+def handle_remove_ai(_data=None):
+    room = state.get_room_by_player(request.sid)
+    if not room:
+        emit("server_error", {"message": "Room not found"})
+        return
+    if room.host_sid != request.sid:
+        emit("server_error", {"message": "Only the host can remove AI"})
+        return
+    with room.lock:
+        updated, error = state.remove_bot(room)
+        if error:
+            emit("server_error", {"message": error})
+            return
+    socketio.emit("room_update", _room_payload(updated), to=room.code)
+
+
 @socketio.on("player_input")
 def handle_player_input(data):
     _ensure_world_loop()
@@ -1460,48 +2176,7 @@ def handle_action(_data=None):
         player = room.players.get(request.sid)
         if not player:
             return
-        if room.status in {"lobby", "between_rounds"}:
-            _spawn_snowball(room, player)
-            return
-        if room.status != "in_round":
-            return
-        if room.round_type == "snowball":
-            _spawn_snowball(room, player)
-        elif room.round_type == "bonus":
-            now = time.time()
-            if now - player.last_action_ts < 0.15:
-                return
-            player.last_action_ts = now
-            player.score += 1
-            player.round_score += 1
-        elif room.round_type == "light":
-            light = room.light or {}
-            holder_id = light.get("holder") if light else ""
-            if holder_id == player.sid:
-                target = None
-                best_dist = 1e9
-                for other in room.players.values():
-                    if other.sid == player.sid:
-                        continue
-                    if not other.alive:
-                        continue
-                    dx = other.x - player.x
-                    dy = other.y - player.y
-                    dist = math.hypot(dx, dy)
-                    if dist <= LIGHT_PASS_RADIUS and dist < best_dist:
-                        best_dist = dist
-                        target = other
-                if target:
-                    player.has_light = False
-                    target.has_light = True
-                    light["holder"] = target.sid
-                    light["heldFor"] = 0.0
-                    light["x"] = target.x
-                    light["y"] = target.y
-            else:
-                _spawn_snowball(room, player)
-        elif room.round_type == "maze":
-            _spawn_snowball(room, player)
+        _perform_action(room, player)
 
 
 @socketio.on("start_game")
@@ -1526,6 +2201,14 @@ def handle_start_game(_data=None):
             player.score_accum = 0.0
             player.has_light = False
             player.energy = 0.0
+            if player.is_bot:
+                player.ai_next_action_ts = 0.0
+                player.ai_next_decision_ts = 0.0
+                player.ai_target_x = 0.0
+                player.ai_target_y = 0.0
+                player.ai_dir_x = 0.0
+                player.ai_dir_y = 0.0
+                player.ai_idle_until = 0.0
         room.status = "between_rounds"
         room.current_round = 0
         room.round_type = "lobby"
