@@ -31,7 +31,7 @@ const MONSTER_SPRITES = [
 ];
 
 const HERO_SPRITES = {
-  holly: "/assets/custom-heroes/player1.png"
+  holly: "/assets/custom-heroes/player1-clean.png"
 };
 
 const ASSETS = {
@@ -99,7 +99,8 @@ const roomToWorld = (room) => {
     gifts: [],
     walls: [],
     trails: [],
-    light: {}
+    light: {},
+    hill: {}
   };
 };
 
@@ -190,10 +191,11 @@ export default function GameCanvas({ world, room, youId, roundType }) {
     if (!canvas || !snapshot) return;
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
-    const rect = canvas.getBoundingClientRect();
-    if (canvas.width !== rect.width || canvas.height !== rect.height) {
-      canvas.width = rect.width;
-      canvas.height = rect.height;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
     }
 
     const worldWidth = snapshot.width || 960;
@@ -324,7 +326,14 @@ export default function GameCanvas({ world, room, youId, roundType }) {
       snapshot.hazards.forEach((hazard) => {
         if (hazard.type === "big_snowball") {
           const size = (hazard.radius || 20) * 2;
-          if (!drawImage(images?.snowball, hazard.x, hazard.y, size)) {
+          if (images?.snowball?.complete) {
+            const spin = now * 3 + (hazard.id || 0) * 0.35;
+            ctx.save();
+            ctx.translate(hazard.x, hazard.y);
+            ctx.rotate(spin);
+            ctx.drawImage(images.snowball, -size / 2, -size / 2, size, size);
+            ctx.restore();
+          } else {
             ctx.fillStyle = "#ffffff";
             ctx.beginPath();
             ctx.arc(hazard.x, hazard.y, hazard.radius || 20, 0, Math.PI * 2);
@@ -430,6 +439,21 @@ export default function GameCanvas({ world, room, youId, roundType }) {
       });
     }
 
+    if (snapshot.hill && snapshot.hill.radius) {
+      const hillX = snapshot.hill.x ?? worldWidth / 2;
+      const hillY = snapshot.hill.y ?? worldHeight * 0.18;
+      const hillRadius = snapshot.hill.radius ?? 160;
+      ctx.save();
+      ctx.fillStyle = "rgba(242, 193, 78, 0.18)";
+      ctx.strokeStyle = "rgba(214, 141, 0, 0.7)";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(hillX, hillY, hillRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
     if (snapshot.light && snapshot.light.x) {
       if (!drawImage(images?.star, snapshot.light.x, snapshot.light.y, 28)) {
         ctx.fillStyle = "#f2c14e";
@@ -478,7 +502,7 @@ export default function GameCanvas({ world, room, youId, roundType }) {
 
         ctx.globalAlpha = player.alive ? 1 : 0.35;
         if (heroSprite && heroSprite.complete) {
-          const heroSize = 56;
+          const heroSize = 64;
           ctx.save();
           ctx.translate(px, py + heroBob);
           ctx.scale(heroFlip * (1 + heroWobble), 1 - heroWobble);
@@ -521,7 +545,7 @@ export default function GameCanvas({ world, room, youId, roundType }) {
 
     ctx.restore();
 
-    if (roundType && ["snowball", "light"].includes(roundType)) {
+    if (roundType && ["snowball", "light", "trails", "hunt", "hill"].includes(roundType)) {
       const mapPadding = 12;
       let mapWidth = 105;
       let mapHeight = (mapWidth * worldHeight) / worldWidth;
@@ -565,6 +589,21 @@ export default function GameCanvas({ world, room, youId, roundType }) {
         ctx.beginPath();
         ctx.arc(toMapX(snapshot.light.x), toMapY(snapshot.light.y), 3, 0, Math.PI * 2);
         ctx.fill();
+      }
+
+      if (snapshot.hill && snapshot.hill.radius) {
+        ctx.strokeStyle = "rgba(214, 141, 0, 0.7)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(
+          toMapX(snapshot.hill.x ?? worldWidth / 2),
+          toMapY(snapshot.hill.y ?? worldHeight * 0.18),
+          (snapshot.hill.radius ?? 160) * (mapWidth / worldWidth),
+          0,
+          Math.PI * 2
+        );
+        ctx.stroke();
+
       }
 
       if (snapshot.players) {

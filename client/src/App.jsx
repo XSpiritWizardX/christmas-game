@@ -34,33 +34,39 @@ const COLOR_LOOKUP = PLAYER_COLORS.reduce((acc, color) => {
 }, {});
 
 const MUSIC_TRACKS = {
-  menu: "/assets/audio/menu.wav",
-  lobby: "/assets/audio/lobby.wav",
-  trails: "/assets/audio/round-trails.wav",
-  snowball: "/assets/audio/round-snowball.wav",
-  light: "/assets/audio/round-light.wav",
-  ice: "/assets/audio/round-ice.wav",
-  survival: "/assets/audio/round-survival.wav"
+  menu: "/assets/audio/The_Christmas_Spirit_is_Here_2025-12-23T171642.wav",
+  lobby: "/assets/audio/gamergang-silent-moments-258504.mp3",
+  trails: "/assets/audio/i-love-my-8-bit-game-console-301272.mp3",
+  snowball: "/assets/audio/chiptune-symphony-8bit-game-theme-music-381366.mp3",
+  hunt: "/assets/audio/christmas-snowball-fight-loop-125954.mp3",
+  hill: "/assets/audio/gamergang-echoes-of-tomorrow-258508.mp3",
+  light: "/assets/audio/soft-christmas-song-no-copyright-music-437579.mp3",
+  ice: "/assets/audio/retro-chiptune-adventure-8-bit-video-game-music-318059.mp3",
+  survival: "/assets/audio/A_Gamers_Christmas_Wish_2025-12-23T170832.wav"
 };
 
 const SFX_TRACKS = {
   whoosh: "/assets/audio/whoosh.wav",
   collect: "/assets/audio/collect.wav"
 };
-const SFX_VOLUME = 0.5;
+const SFX_VOLUME = 0.4;
 
 const roundName = (roundType) => {
   switch (roundType) {
     case "survival":
       return "Round 5 - Survival";
     case "snowball":
-      return "Round 2 - Snowball Fight";
+      return "Round 4 - Snowball Fight";
+    case "hunt":
+      return "Round 2 - Monster Hunt";
     case "light":
-      return "Round 3 - Carry the Light";
+      return "Round 6 - Carry the Light";
     case "ice":
-      return "Round 4 - Ice Slide";
+      return "Round 7 - Ice Slide";
     case "trails":
-      return "Round 1 - Glow Trails";
+      return "Round 3 - Glow Trails";
+    case "hill":
+      return "Round 1 - King of the Hill";
     case "bonus":
       return "Bonus Round - Tap";
     default:
@@ -74,12 +80,16 @@ const roundLabel = (roundType) => {
       return "Survival";
     case "snowball":
       return "Snowball Fight";
+    case "hunt":
+      return "Monster Hunt";
     case "light":
       return "Carry the Light";
     case "ice":
       return "Ice Slide";
     case "trails":
       return "Glow Trails";
+    case "hill":
+      return "King of the Hill";
     case "bonus":
       return "Bonus Tap";
     default:
@@ -93,12 +103,16 @@ const roundInstruction = (roundType) => {
       return "Dodge falling snowflakes and grab candy for points.";
     case "snowball":
       return "Players are separated into two teams. Players have three health. Throw snowballs to eliminate the other team. Watch for big snowballs crossing the map.";
+    case "hunt":
+      return "Monsters charge from every side. Hit them for points as the waves get tougher.";
     case "light":
       return "The christmas light will spawn randomly on the map. Hold the light to score up to twenty seconds; pass it to nearby players. And travel near the light holder for points. If hit, it drops.";
     case "ice":
       return "Stay alive on the slope. Avoid trees; points each second.";
     case "trails":
       return "Fill the map with your color. Avoid other trails to survive.";
+    case "hill":
+      return "Fight up the hill. Score while standing on the hill and for hitting monsters.";
     case "bonus":
       return "Tap fast to rack up points.";
     default:
@@ -127,7 +141,8 @@ const roomToWorld = (room) => {
     gifts: [],
     walls: [],
     trails: [],
-    light: {}
+    light: {},
+    hill: {}
   };
 };
 
@@ -234,7 +249,7 @@ export default function App() {
     const id = setInterval(() => {
       const current = inputRef.current;
       emit("player_input", { x: current.x, y: current.y });
-    }, 50);
+    }, 33);
     return () => clearInterval(id);
   }, [room?.code]);
 
@@ -318,26 +333,18 @@ export default function App() {
 
   useEffect(() => {
     if (!isHollyName) return;
-    if (colorId !== "black") return;
-    const fallback = PLAYER_COLORS.find((color) => color.id !== "black")?.id;
-    if (fallback) {
-      setColorId(fallback);
+    if (colorId === "black") return;
+    setColorId("black");
+    if (room?.status === "lobby") {
+      emit("set_color", { color: "black" });
     }
-  }, [colorId, isHollyName]);
+  }, [colorId, isHollyName, room?.status]);
 
   useEffect(() => {
     if (!you || !room || !isHollyName) return;
-    if (you.color !== "black") return;
-    const taken = new Set(
-      room.players.filter((player) => player.id !== youId).map((player) => player.color)
-    );
-    const fallback = PLAYER_COLORS.find(
-      (color) => color.id !== "black" && !taken.has(color.id)
-    )?.id;
-    if (fallback) {
-      setColorId(fallback);
-      emit("set_color", { color: fallback });
-    }
+    if (you.color === "black") return;
+    setColorId("black");
+    emit("set_color", { color: "black" });
   }, [you, room, youId, isHollyName]);
 
   useEffect(() => {
@@ -360,6 +367,11 @@ export default function App() {
       room.players.filter((player) => player.id !== youId).map((player) => player.color)
     );
   }, [room?.players, youId]);
+  const hollyInRoom = useMemo(() => {
+    return Boolean(
+      room?.players?.some((player) => (player.name || "").trim().toLowerCase() === "holly")
+    );
+  }, [room?.players]);
 
   const resetState = () => {
     setRoom(null);
@@ -438,7 +450,9 @@ export default function App() {
       roundType === "maze" ||
       roundType === "light" ||
       roundType === "survival" ||
-      roundType === "ice";
+      roundType === "ice" ||
+      roundType === "hunt" ||
+      roundType === "hill";
     if (isThrowRound && !(roundType === "light" && you?.hasLight)) {
       playWhoosh();
     }
@@ -451,7 +465,7 @@ export default function App() {
 
   const handleColorPick = (color) => {
     setError("");
-    if (isHollyName && color === "black") {
+    if (isHollyName && color !== "black") {
       return;
     }
     setColorId(color);
@@ -479,12 +493,16 @@ export default function App() {
       return "Throw";
     if (room.roundType === "ice" || room.roundType === "survival")
       return "Throw";
-    if (room.roundType === "trails") return "Trail";
+    if (room.roundType === "hunt" || room.roundType === "hill")
+      return "Throw";
+    if (room.roundType === "trails") return "Splash";
     if (room.roundType === "bonus") return "Tap!";
     return "Action";
   })();
 
-  const actionDisabled = room?.roundType === "trails";
+  const splashReadyAt = you?.dashReadyAt ?? 0;
+  const splashReady = Date.now() / 1000 >= splashReadyAt;
+  const actionDisabled = room?.roundType === "trails" ? !splashReady : false;
 
   useEffect(() => {
     const gifts = world?.gifts || [];
@@ -555,14 +573,15 @@ export default function App() {
                 <div className="color-grid">
                   {PLAYER_COLORS.map((color) => {
                     const selected = color.id === colorId;
-                    const disabledForHolly = isHollyName && color.id === "black";
+                    const disabledForHolly = isHollyName && color.id !== "black";
+                    const reservedForHolly = hollyInRoom && !isHollyName && color.id === "black";
                     return (
                       <button
                         key={color.id}
                         type="button"
                         className={selected ? "color-option selected" : "color-option"}
                         onClick={() => handleColorPick(color.id)}
-                        disabled={disabledForHolly}
+                        disabled={disabledForHolly || reservedForHolly}
                         aria-pressed={selected}
                       >
                         <img src={color.sprite} alt="" className="player-avatar" />
@@ -656,8 +675,12 @@ export default function App() {
                         {PLAYER_COLORS.map((color) => {
                           const selected = you?.color === color.id || color.id === colorId;
                           const takenByOther = takenColors.has(color.id);
-                          const disabledForHolly = isHollyName && color.id === "black";
-                          const disabled = (takenByOther && !selected) || disabledForHolly;
+                          const disabledForHolly = isHollyName && color.id !== "black";
+                          const reservedForHolly = hollyInRoom && !isHollyName && color.id === "black";
+                          const allowHollyOverride = isHollyName && color.id === "black";
+                          const disabled =
+                            ((takenByOther && !selected) || disabledForHolly || reservedForHolly) &&
+                            !allowHollyOverride;
                           return (
                             <button
                               key={color.id}

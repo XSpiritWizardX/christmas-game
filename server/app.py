@@ -13,13 +13,15 @@ app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 state = GameState()
 
-ROUND_SEQUENCE = ["trails", "snowball", "light", "ice", "survival"]
+ROUND_SEQUENCE = ["hill", "hunt", "trails", "snowball", "survival", "light", "ice"]
 ROUND_DURATIONS = {
-    "survival": 45,
+    "survival": 65,
     "snowball": 120,
+    "hunt": 120,
+    "hill": 120,
     "light": 120,
-    "ice": 120,
-    "trails": 120,
+    "ice": 180,
+    "trails": 180,
     "bonus": 10,
 }
 BONUS_CHANCE = 0.4
@@ -43,6 +45,7 @@ ICE_SCROLL_RAMP = 120.0
 ICE_STRAFE_SPEED = 180.0
 ICE_TREE_TARGET = 55
 ICE_TREE_RAMP = 0.6
+ICE_TREE_RAMP_TIME = 180.0
 ICE_TREE_BUFFER = 160.0
 ICE_TREE_SAFE_RADIUS = 80.0
 ICE_PLAYER_Y = 0.6
@@ -50,15 +53,37 @@ ICE_FINISH_LEAD = 0.8
 ICE_FLAG_TARGET = 14
 ICE_FLAG_POINTS = 10
 ICE_START_BUFFER = 5.0
+ICE_SNOWFLAKE_INTERVAL = 0.6
+ICE_SNOWBALL_INTERVAL = 1.1
 LIGHT_HOLDER_POINTS = 5
 LIGHT_AURA_POINTS = 3
 LIGHT_AURA_RADIUS = 130.0
 LIGHT_PASS_RADIUS = 140.0
 LIGHT_HIT_BONUS = 20
 LIGHT_HOLD_DURATION = 20.0
-SNOWBALL_HAZARD_INTERVAL = 1.4
+SNOWBALL_HAZARD_INTERVAL = 0.9
 SNOWBALL_HAZARD_SPEED = 360.0
 SNOWBALL_HAZARD_RADIUS = 24.0
+HOLLY_SPEED_MULTIPLIER = 1.2
+HUNT_SPAWN_BASE = 1.2
+HUNT_SPAWN_MIN = 0.45
+HUNT_MONSTER_LIMIT_BASE = 20
+HUNT_MONSTER_SPEED_SCALE = 0.55
+HUNT_MONSTER_HIT_POINTS = 2
+HUNT_TREE_COUNT = 45
+HUNT_SNOWBALL_INTERVAL = 1.1
+HILL_POINTS_PER_SECOND = 4
+HILL_MONSTER_HIT_POINTS = 2
+HILL_RADIUS = 160.0
+HILL_Y_OFFSET = 0.12
+HILL_RESPAWN_Y_OFFSET = 0.9
+HILL_KNOCKBACK_DISTANCE = 120.0
+HILL_STUN_DURATION = 0.6
+HILL_SNOWBALL_INTERVAL = 0.7
+HILL_FALLING_INTERVAL = 0.5
+HILL_TREE_COUNT = 60
+TRAIL_SPLASH_COOLDOWN = 5.0
+TRAIL_SPLASH_RADIUS = 4
 TRAIL_TILE_SIZE = 16.0
 TRAIL_TILE_POINTS = 1
 TRAIL_START_BUFFER = 2.0
@@ -76,6 +101,8 @@ AI_ACTION_COOLDOWNS = {
     "snowball": (0.9, 1.6),
     "maze": (1.0, 1.7),
     "light": (1.0, 1.8),
+    "hunt": (0.9, 1.5),
+    "hill": (0.9, 1.5),
     "bonus": (0.18, 0.28),
 }
 AI_SNOWBALL_RANGE = 420.0
@@ -93,6 +120,8 @@ ICE_WIDTH = 2400
 ICE_HEIGHT = 1600
 LARGE_WIDTH = 6000
 LARGE_HEIGHT = 3600
+HILL_WIDTH = 2400
+HILL_HEIGHT = 3200
 
 SURVIVAL_GIFT_POINTS = 5
 MAZE_GIFT_POINTS = 10
@@ -136,6 +165,21 @@ def _safe_name(raw_name):
     return name[:16]
 
 
+def _is_holly_player(player):
+    return (player.name or "").strip().lower() == "holly"
+
+
+def _player_speed_multiplier(player):
+    return HOLLY_SPEED_MULTIPLIER if _is_holly_player(player) else 1.0
+
+
+def _hill_respawn_position(room):
+    margin = 60
+    x = random.uniform(margin, room.width - margin)
+    y = room.height * HILL_RESPAWN_Y_OFFSET
+    return x, y
+
+
 def _next_round_type(room):
     order = room.round_order or list(ROUND_SEQUENCE)
     if room.current_round >= len(order):
@@ -169,6 +213,7 @@ def _world_payload(room):
                 "roundScore": player.round_score,
                 "ringsLeft": player.rings_left,
                 "isBot": player.is_bot,
+                "dashReadyAt": player.dash_ready_ts,
             }
         )
     payload = {
@@ -195,6 +240,7 @@ def _world_payload(room):
             "walls": list(room.walls),
             "trails": list(room.trails),
             "light": dict(room.light) if room.light else {},
+            "hill": dict(room.hill) if room.hill else {},
         },
     }
     return payload
@@ -535,6 +581,7 @@ def _maybe_spawn_snowball_boss(room, now, dt):
         _spawn_snowball_boss(room, now)
 
 def _move_with_walls(room, player, dt, speed):
+    speed *= _player_speed_multiplier(player)
     dx = player.input_x
     dy = player.input_y
     new_x = player.x + dx * speed * dt
@@ -548,6 +595,34 @@ def _move_with_walls(room, player, dt, speed):
         if any(_rect_collides_circle(wall, test_x, test_y, PLAYER_RADIUS) for wall in room.walls):
             test_y = player.y
         new_x, new_y = test_x, test_y
+
+    new_x, new_y = _player_bounds(room, new_x, new_y)
+    player.x = new_x
+    player.y = new_y
+
+
+def _move_with_trees(room, player, dt, speed):
+    speed *= _player_speed_multiplier(player)
+    dx = player.input_x
+    dy = player.input_y
+    new_x = player.x + dx * speed * dt
+    new_y = player.y + dy * speed * dt
+
+    if room.walls:
+        test_x = new_x
+        if any(_rect_collides_circle(wall, test_x, player.y, PLAYER_RADIUS) for wall in room.walls):
+            test_x = player.x
+        test_y = new_y
+        if any(_rect_collides_circle(wall, test_x, test_y, PLAYER_RADIUS) for wall in room.walls):
+            test_y = player.y
+        new_x, new_y = test_x, test_y
+
+    if room.decorations and any(
+        deco.get("type") == "tree"
+        and _circle_hit(new_x, new_y, PLAYER_RADIUS, deco["x"], deco["y"], _tree_radius(deco))
+        for deco in room.decorations
+    ):
+        new_x, new_y = player.x, player.y
 
     new_x, new_y = _player_bounds(room, new_x, new_y)
     player.x = new_x
@@ -605,6 +680,31 @@ def _spawn_snowball_dir(room, player, dx, dy):
     _spawn_snowball(room, player)
 
 
+def _splash_trail(room, player):
+    now = time.time()
+    if now < player.dash_ready_ts:
+        return
+    if room.round_elapsed < TRAIL_START_BUFFER:
+        return
+    player.dash_ready_ts = now + TRAIL_SPLASH_COOLDOWN
+    size = TRAIL_TILE_SIZE
+    cx = int(player.x // size)
+    cy = int(player.y // size)
+    radius = TRAIL_SPLASH_RADIUS
+    points = 0
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            if dx * dx + dy * dy > radius * radius:
+                continue
+            tx = cx + dx
+            ty = cy + dy
+            if _set_trail_tile(room, player, tx, ty):
+                points += TRAIL_TILE_POINTS
+    if points:
+        player.score += points
+        player.round_score += points
+
+
 def _perform_action(room, player):
     if room.status in {"lobby", "between_rounds"}:
         _spawn_snowball(room, player)
@@ -612,6 +712,8 @@ def _perform_action(room, player):
     if room.status != "in_round":
         return
     if room.round_type == "snowball":
+        _spawn_snowball(room, player)
+    elif room.round_type in {"hunt", "hill"}:
         _spawn_snowball(room, player)
     elif room.round_type in {"survival", "ice"}:
         _spawn_snowball_dir(room, player, 0.0, -1.0)
@@ -648,6 +750,8 @@ def _perform_action(room, player):
                 light["y"] = target.y
         else:
             _spawn_snowball(room, player)
+    elif room.round_type == "trails":
+        _splash_trail(room, player)
     elif room.round_type == "maze":
         _spawn_snowball(room, player)
 
@@ -762,6 +866,104 @@ def _spawn_monsters(room):
             )
             room.next_monster_id += 1
             break
+
+
+def _pick_hunt_type(difficulty):
+    roll = random.random()
+    small_cut = max(0.35, 0.65 - 0.3 * difficulty)
+    medium_cut = min(0.9, small_cut + 0.3)
+    if roll < small_cut:
+        return "small"
+    if roll < medium_cut:
+        return "medium"
+    return "big"
+
+
+def _spawn_hunt_monster(room, difficulty, target_x, target_y):
+    side = random.choice(["top", "bottom", "left", "right"])
+    margin = 40
+    if side == "top":
+        x = random.uniform(margin, room.width - margin)
+        y = -margin
+    elif side == "bottom":
+        x = random.uniform(margin, room.width - margin)
+        y = room.height + margin
+    elif side == "left":
+        x = -margin
+        y = random.uniform(margin, room.height - margin)
+    else:
+        x = room.width + margin
+        y = random.uniform(margin, room.height - margin)
+
+    mtype = _pick_hunt_type(difficulty)
+    cfg = MONSTER_TYPES[mtype]
+    dx = target_x - x
+    dy = target_y - y
+    angle = math.atan2(dy, dx) + random.uniform(-0.35, 0.35)
+    speed = cfg["speed"] * (1.0 + HUNT_MONSTER_SPEED_SCALE * difficulty)
+    radius = 14 if mtype == "small" else 18 if mtype == "medium" else 22
+    room.monsters.append(
+        {
+            "id": room.next_monster_id,
+            "type": mtype,
+            "sprite": _pick_monster_sprite(),
+            "x": x,
+            "y": y,
+            "vx": math.cos(angle) * speed,
+            "vy": math.sin(angle) * speed,
+            "hp": cfg["hp"],
+            "maxHp": cfg["hp"],
+            "radius": radius,
+        }
+    )
+    room.next_monster_id += 1
+
+
+def _update_hunt_monsters(room, dt):
+    if not room.monsters:
+        return
+    for monster in room.monsters:
+        monster["x"] += monster.get("vx", 0.0) * dt
+        monster["y"] += monster.get("vy", 0.0) * dt
+        radius = monster.get("radius", 16)
+        if monster["x"] <= radius or monster["x"] >= room.width - radius:
+            monster["vx"] = -monster.get("vx", 0.0)
+        if monster["y"] <= radius or monster["y"] >= room.height - radius:
+            monster["vy"] = -monster.get("vy", 0.0)
+        monster["x"] = _clamp(monster["x"], radius, room.width - radius)
+        monster["y"] = _clamp(monster["y"], radius, room.height - radius)
+
+        if room.decorations and any(
+            deco.get("type") == "tree"
+            and _circle_hit(monster["x"], monster["y"], radius + 6, deco["x"], deco["y"], _tree_radius(deco))
+            for deco in room.decorations
+        ):
+            monster["vx"] = -monster.get("vx", 0.0)
+            monster["vy"] = -monster.get("vy", 0.0)
+
+
+def _handle_projectiles_on_hunt_monsters(room, hit_points):
+    if not room.projectiles or not room.monsters:
+        return
+    remaining_projectiles = []
+    for projectile in room.projectiles:
+        hit = False
+        for monster in room.monsters:
+            if monster.get("type") == "boss":
+                continue
+            radius = monster.get("radius", 16)
+            if _circle_hit(projectile["x"], projectile["y"], PROJECTILE_RADIUS, monster["x"], monster["y"], radius):
+                monster["hp"] = monster.get("hp", 1) - 1
+                shooter = room.players.get(projectile.get("owner"))
+                if shooter:
+                    shooter.score += hit_points
+                    shooter.round_score += hit_points
+                hit = True
+                break
+        if not hit:
+            remaining_projectiles.append(projectile)
+    room.projectiles = remaining_projectiles
+    room.monsters = [monster for monster in room.monsters if monster.get("hp", 1) > 0]
 
 
 def _spawn_fireball(room, monster, target_x, target_y):
@@ -949,10 +1151,15 @@ def _setup_round(room, round_type):
     room.gifts = []
     room.walls = []
     room.light = {}
+    room.hill = {}
     room.trails = []
     room.trail_map = {}
     room.hazard_accum = 0.0
     room.gift_accum = 0.0
+    room.hill_snow_accum = 0.0
+    room.hill_fall_accum = 0.0
+    room.ice_snow_accum = 0.0
+    room.ice_snowball_accum = 0.0
     room.round_elapsed = 0.0
     room.ice_finish_line_spawned = False
     room.ice_buffer_until = 0.0
@@ -967,7 +1174,10 @@ def _setup_round(room, round_type):
     if round_type == "ice":
         room.width = ICE_WIDTH
         room.height = ICE_HEIGHT
-    elif round_type in {"snowball", "light", "trails"}:
+    elif round_type == "hill":
+        room.width = HILL_WIDTH
+        room.height = HILL_HEIGHT
+    elif round_type in {"snowball", "light", "trails", "hunt", "hill"}:
         room.width = LARGE_WIDTH
         room.height = LARGE_HEIGHT
     else:
@@ -990,7 +1200,10 @@ def _setup_round(room, round_type):
         player.round_score = 0
         player.score_accum = 0.0
         player.energy = 0.0
-        player.rings_left = 3 if round_type == "snowball" else 0
+        if round_type == "snowball":
+            player.rings_left = 4 if _is_holly_player(player) else 3
+        else:
+            player.rings_left = 0
         player.input_x = 0.0
         player.input_y = 0.0
         player.facing_x = 1.0
@@ -999,6 +1212,8 @@ def _setup_round(room, round_type):
         player.last_hit_ts = 0.0
         player.vel_x = 0.0
         player.vel_y = 0.0
+        player.dash_ready_ts = 0.0
+        player.stun_until = 0.0
         if player.is_bot:
             player.ai_next_action_ts = 0.0
             player.ai_next_decision_ts = 0.0
@@ -1022,16 +1237,30 @@ def _setup_round(room, round_type):
             player.round_score = 0
         elif round_type == "bonus":
             player.x, player.y = _random_spawn(room, idx)
+        elif round_type == "hill":
+            player.x, player.y = _hill_respawn_position(room)
 
     if round_type == "snowball":
         blue_team = [player for player in players if player.team == 0]
         red_team = [player for player in players if player.team == 1]
         _edge_spawns(room, blue_team, start_angle=math.pi / 2, end_angle=3 * math.pi / 2)
         _edge_spawns(room, red_team, start_angle=-math.pi / 2, end_angle=math.pi / 2)
-    elif round_type in {"light", "trails"}:
+    elif round_type in {"light", "trails", "hunt", "hill"}:
         _edge_spawns(room, players)
 
-    if round_type == "maze":
+    if round_type == "hill":
+        room.hill = {
+            "x": room.width / 2,
+            "y": room.height * HILL_Y_OFFSET,
+            "radius": HILL_RADIUS,
+        }
+
+    if round_type == "hunt":
+        _spawn_trees(room, HUNT_TREE_COUNT)
+        _spawn_snowball_boss(room, time.time())
+    elif round_type == "hill":
+        _spawn_trees(room, HILL_TREE_COUNT)
+    elif round_type == "maze":
         room.walls = _maze_walls(room)
         _spawn_monsters(room)
     if round_type == "ice":
@@ -1046,7 +1275,7 @@ def _setup_round(room, round_type):
         _spawn_trees(room, count)
     if round_type == "light":
         room.light = {"x": room.width / 2, "y": room.height / 2, "holder": "", "heldFor": 0.0}
-    if round_type in {"survival", "snowball", "light", "trails", "bonus"}:
+    if round_type in {"survival", "light", "trails", "bonus", "hunt"}:
         base = max(2, min(8, len(players) + 1))
         speed_range = BONUS_MONSTER_SPEED if round_type == "bonus" else HAZARD_MONSTER_SPEED
         _spawn_roaming_monsters(room, base, speed_range=speed_range)
@@ -1123,9 +1352,54 @@ def _add_trail_tile(room, player, tx, ty):
     return True
 
 
+def _set_trail_tile(room, player, tx, ty):
+    size = TRAIL_TILE_SIZE
+    key = (tx, ty)
+    existing = room.trail_map.get(key)
+    if existing:
+        if existing["owner"] == player.sid:
+            return False
+        existing["color"] = player.color
+        existing["owner"] = player.sid
+        return True
+    return _add_trail_tile(room, player, tx, ty)
+
+
 def _trail_coords(player):
     size = TRAIL_TILE_SIZE
     return int(player.x // size), int(player.y // size)
+
+
+def _add_trail_path(room, player, start_x, start_y, end_x, end_y):
+    size = TRAIL_TILE_SIZE
+    sx = int(start_x // size)
+    sy = int(start_y // size)
+    ex = int(end_x // size)
+    ey = int(end_y // size)
+    dx = abs(ex - sx)
+    dy = abs(ey - sy)
+    step_x = 1 if sx < ex else -1
+    step_y = 1 if sy < ey else -1
+    err = dx - dy
+    tx = sx
+    ty = sy
+    points = 0
+    while True:
+        if _set_trail_tile(room, player, tx, ty):
+            points += TRAIL_TILE_POINTS
+        if tx == ex and ty == ey:
+            break
+        e2 = err * 2
+        if e2 > -dy:
+            err -= dy
+            tx += step_x
+        if e2 < dx:
+            err += dx
+            ty += step_y
+    if points:
+        player.score += points
+        player.round_score += points
+    return ex, ey, points > 0
 
 
 def _trail_region(room, start_x, start_y, grid_w, grid_h, visited):
@@ -1193,12 +1467,12 @@ def _update_trails(room, dt):
     for player in room.players.values():
         if not player.alive:
             continue
+        prev_x = player.x
+        prev_y = player.y
         _move_with_walls(room, player, dt, PLAYER_SPEED)
         if room.round_elapsed >= TRAIL_START_BUFFER:
-            tx, ty = _trail_coords(player)
-            if _add_trail_tile(room, player, tx, ty):
-                player.score += TRAIL_TILE_POINTS
-                player.round_score += TRAIL_TILE_POINTS
+            tx, ty, added = _add_trail_path(room, player, prev_x, prev_y, player.x, player.y)
+            if added:
                 _fill_trail_loops(room, player, tx, ty)
 
     if room.round_elapsed < TRAIL_START_BUFFER or not room.trail_map:
@@ -1216,6 +1490,230 @@ def _update_trails(room, dt):
 
     _update_roaming_monsters(room, dt)
     _handle_monster_collisions(room)
+
+
+def _update_hunt(room, dt):
+    _update_projectiles(room, dt)
+    _handle_projectiles_on_hazard_monsters(room)
+    for player in room.players.values():
+        if not player.alive:
+            continue
+        _move_with_walls(room, player, dt, PLAYER_SPEED)
+
+    difficulty = min(1.0, room.round_elapsed / max(1.0, room.round_duration))
+    spawn_interval = max(
+        HUNT_SPAWN_MIN, HUNT_SPAWN_BASE - (HUNT_SPAWN_BASE - HUNT_SPAWN_MIN) * difficulty
+    )
+    target_center_x = room.width / 2
+    target_center_y = room.height / 2
+    monster_limit = HUNT_MONSTER_LIMIT_BASE + int(len(room.players) * 2.0 + 14 * difficulty)
+    room.hazard_accum += dt
+    while room.hazard_accum >= spawn_interval and len(room.monsters) < monster_limit:
+        _spawn_hunt_monster(room, difficulty, target_center_x, target_center_y)
+        room.hazard_accum -= spawn_interval
+
+    _handle_projectiles_on_hunt_monsters(room, HUNT_MONSTER_HIT_POINTS)
+    _update_hunt_monsters(room, dt)
+
+    now = time.time()
+    _update_snowball_boss(room, now)
+
+    if not room.hazards:
+        room.hazards = []
+    room.gift_accum += dt
+    while room.gift_accum >= HUNT_SNOWBALL_INTERVAL:
+        _spawn_big_snowball(room)
+        room.gift_accum -= HUNT_SNOWBALL_INTERVAL
+    hazards = []
+    for hazard in room.hazards:
+        if hazard.get("type") != "big_snowball":
+            hazards.append(hazard)
+            continue
+        hazard["x"] += hazard.get("vx", 0.0) * dt
+        hazard["y"] += hazard.get("vy", 0.0) * dt
+        radius = hazard.get("radius", HAZARD_RADIUS)
+        if (
+            hazard["x"] < -radius
+            or hazard["x"] > room.width + radius
+            or hazard["y"] < -radius
+            or hazard["y"] > room.height + radius
+        ):
+            continue
+        hit = False
+        for player in room.players.values():
+            if player.alive and _circle_hit(hazard["x"], hazard["y"], radius, player.x, player.y, PLAYER_RADIUS):
+                player.alive = False
+                hit = True
+                break
+        if not hit:
+            hazards.append(hazard)
+    room.hazards = hazards
+
+    boss = next((monster for monster in room.monsters if monster.get("type") == "boss"), None)
+    if boss:
+        remaining = []
+        for projectile in room.projectiles:
+            if projectile.get("owner") == "boss":
+                for player in room.players.values():
+                    if not player.alive:
+                        continue
+                    if _circle_hit(projectile["x"], projectile["y"], PROJECTILE_RADIUS, player.x, player.y, PLAYER_RADIUS):
+                        player.alive = False
+                        break
+                else:
+                    remaining.append(projectile)
+                continue
+            if _circle_hit(projectile["x"], projectile["y"], PROJECTILE_RADIUS, boss["x"], boss["y"], boss["radius"]):
+                shooter = room.players.get(projectile.get("owner"))
+                if shooter:
+                    shooter.score += 3
+                    shooter.round_score += 3
+                boss["hp"] = max(0, boss.get("hp", SNOWBALL_BOSS_HP) - 1)
+            else:
+                remaining.append(projectile)
+        room.projectiles = remaining
+        if boss.get("hp", 0) <= 0:
+            room.monsters = [monster for monster in room.monsters if monster.get("type") != "boss"]
+            room.snowball_boss_active = False
+            _announce(room, "Boss defeated! Bonus points!", duration=3.5)
+
+    for monster in room.monsters:
+        radius = monster.get("radius", 16)
+        for player in room.players.values():
+            if not player.alive:
+                continue
+            if _circle_hit(monster["x"], monster["y"], radius, player.x, player.y, PLAYER_RADIUS):
+                player.alive = False
+
+
+def _update_hill(room, dt):
+    _update_projectiles(room, dt)
+    for player in room.players.values():
+        if not player.alive:
+            continue
+        if time.time() >= player.stun_until:
+            _move_with_trees(room, player, dt, PLAYER_SPEED)
+
+    hill = room.hill or {}
+    hill_x = hill.get("x", room.width / 2)
+    hill_y = hill.get("y", room.height * HILL_Y_OFFSET)
+    hill_radius = hill.get("radius", HILL_RADIUS)
+
+    for player in room.players.values():
+        if not player.alive:
+            continue
+        if _circle_hit(player.x, player.y, PLAYER_RADIUS, hill_x, hill_y, hill_radius):
+            player.score_accum += dt * HILL_POINTS_PER_SECOND
+            while player.score_accum >= 1.0:
+                player.score += 1
+                player.round_score += 1
+                player.score_accum -= 1.0
+
+    difficulty = min(1.0, room.round_elapsed / max(1.0, room.round_duration))
+    spawn_interval = max(
+        HUNT_SPAWN_MIN, HUNT_SPAWN_BASE - (HUNT_SPAWN_BASE - HUNT_SPAWN_MIN) * difficulty
+    )
+    monster_limit = HUNT_MONSTER_LIMIT_BASE + int(len(room.players) * 1.2 + 8 * difficulty)
+    room.hazard_accum += dt
+    while room.hazard_accum >= spawn_interval and len(room.monsters) < monster_limit:
+        _spawn_hunt_monster(room, difficulty, hill_x, hill_y)
+        room.hazard_accum -= spawn_interval
+
+    if room.monsters:
+        room.monsters = []
+
+    room.hill_snow_accum += dt
+    while room.hill_snow_accum >= HILL_SNOWBALL_INTERVAL:
+        _spawn_big_snowball(room)
+        room.hill_snow_accum -= HILL_SNOWBALL_INTERVAL
+
+    room.hill_fall_accum += dt
+    while room.hill_fall_accum >= HILL_FALLING_INTERVAL:
+        _spawn_hazard(room)
+        room.hill_fall_accum -= HILL_FALLING_INTERVAL
+
+    hazards = []
+    for hazard in room.hazards:
+        if hazard.get("type") == "big_snowball":
+            hazard["x"] += hazard.get("vx", 0.0) * dt
+            hazard["y"] += hazard.get("vy", 0.0) * dt
+            radius = hazard.get("radius", HAZARD_RADIUS)
+            if (
+                hazard["x"] < -radius
+                or hazard["x"] > room.width + radius
+                or hazard["y"] < -radius
+                or hazard["y"] > room.height + radius
+            ):
+                continue
+        else:
+            hazard["y"] += hazard.get("vy", 0.0) * dt
+            if hazard["y"] > room.height + 30:
+                continue
+            radius = HAZARD_RADIUS
+        hit = False
+        for player in room.players.values():
+            if not player.alive:
+                continue
+            if _circle_hit(hazard["x"], hazard["y"], radius, player.x, player.y, PLAYER_RADIUS):
+                if _circle_hit(player.x, player.y, PLAYER_RADIUS, hill_x, hill_y, hill_radius):
+                    player.x, player.y = _hill_respawn_position(room)
+                else:
+                    player.x, player.y = _move_entity(
+                        room,
+                        player.x,
+                        player.y,
+                        0.0,
+                        1.0,
+                        HILL_KNOCKBACK_DISTANCE,
+                        1.0,
+                        PLAYER_RADIUS,
+                    )
+                player.stun_until = time.time() + HILL_STUN_DURATION
+                hit = True
+                break
+        if not hit:
+            hazards.append(hazard)
+    room.hazards = hazards
+
+    remaining_projectiles = []
+    for projectile in room.projectiles:
+        shooter = room.players.get(projectile.get("owner"))
+        hit = False
+        for player in room.players.values():
+            if player.sid == projectile.get("owner"):
+                continue
+            if not player.alive:
+                continue
+            if _circle_hit(projectile["x"], projectile["y"], PROJECTILE_RADIUS, player.x, player.y, PLAYER_RADIUS):
+                if _circle_hit(player.x, player.y, PLAYER_RADIUS, hill_x, hill_y, hill_radius):
+                    player.x, player.y = _hill_respawn_position(room)
+                else:
+                    if shooter:
+                        dx = player.x - shooter.x
+                        dy = player.y - shooter.y + 0.35
+                    else:
+                        dx = projectile.get("vx", 0.0)
+                        dy = projectile.get("vy", 0.0) + 0.35
+                    mag = math.hypot(dx, dy) or 1.0
+                    dx /= mag
+                    dy /= mag
+                    player.x, player.y = _move_entity(
+                        room, player.x, player.y, dx, dy, HILL_KNOCKBACK_DISTANCE, 1.0, PLAYER_RADIUS
+                    )
+                player.stun_until = time.time() + HILL_STUN_DURATION
+                hit = True
+                break
+        if not hit:
+            remaining_projectiles.append(projectile)
+    room.projectiles = remaining_projectiles
+
+    for monster in room.monsters:
+        radius = monster.get("radius", 16)
+        for player in room.players.values():
+            if not player.alive:
+                continue
+            if _circle_hit(monster["x"], monster["y"], radius, player.x, player.y, PLAYER_RADIUS):
+                player.alive = False
 
 
 def _handle_light_projectiles(room):
@@ -1435,6 +1933,41 @@ def _update_ai(room, now):
                 _ai_wander(room, player, now, speed=0.6)
             continue
 
+        if room.round_type in {"hunt", "hill"}:
+            target = None
+            best_dist = 1e9
+            for monster in room.monsters:
+                dx = monster["x"] - player.x
+                dy = monster["y"] - player.y
+                dist = math.hypot(dx, dy)
+                if dist < best_dist:
+                    best_dist = dist
+                    target = monster
+            if target:
+                dx = target["x"] - player.x
+                dy = target["y"] - player.y
+                aim_dx = dx
+                aim_dy = dy
+                if best_dist < 90 and random.random() > 0.35:
+                    dx = -dx
+                    dy = -dy
+                _set_bot_input(player, dx, dy, speed_scale=0.85)
+                if best_dist < AI_MAZE_SHOT_RANGE and _ai_ready_action(
+                    player, now, AI_ACTION_COOLDOWNS["hunt"]
+                ):
+                    if random.random() >= AI_SHOT_HESITATE_CHANCE:
+                        aim_dx, aim_dy = _ai_aim_noise(aim_dx, aim_dy, AI_AIM_JITTER)
+                        aim_dx, aim_dy = _normalize_input(aim_dx, aim_dy)
+                        if abs(aim_dx) > 0.05 or abs(aim_dy) > 0.05:
+                            player.facing_x = aim_dx
+                            player.facing_y = aim_dy
+                        _perform_action(room, player)
+            elif room.round_type == "hill" and room.hill:
+                _set_bot_input(player, room.hill["x"] - player.x, room.hill["y"] - player.y, speed_scale=0.85)
+            else:
+                _ai_wander(room, player, now, speed=0.6)
+            continue
+
         if room.round_type == "trails":
             if random.random() < AI_WANDER_CHANCE:
                 _ai_wander(room, player, now, speed=0.6)
@@ -1505,7 +2038,8 @@ def _update_survival(room, dt):
     for player in room.players.values():
         if not player.alive:
             continue
-        player.x = _clamp(player.x + player.input_x * SURVIVAL_SPEED * dt, PLAYER_RADIUS, room.width - PLAYER_RADIUS)
+        speed = SURVIVAL_SPEED * _player_speed_multiplier(player)
+        player.x = _clamp(player.x + player.input_x * speed * dt, PLAYER_RADIUS, room.width - PLAYER_RADIUS)
         player.y = room.height - 50
         player.score_accum += dt
         while player.score_accum >= 1.0:
@@ -1557,9 +2091,6 @@ def _update_snowball(room, dt):
             continue
         _move_with_walls(room, player, dt, PLAYER_SPEED)
 
-    _update_roaming_monsters(room, dt)
-    _handle_monster_collisions(room)
-
     room.hazard_accum += dt
     while room.hazard_accum >= SNOWBALL_HAZARD_INTERVAL:
         _spawn_big_snowball(room)
@@ -1590,28 +2121,13 @@ def _update_snowball(room, dt):
             hazards.append(hazard)
     room.hazards = hazards
 
-    _maybe_spawn_snowball_boss(room, now, dt)
-    _update_snowball_boss(room, now)
-
     _update_projectiles(room, dt)
-    _handle_projectiles_on_hazard_monsters(room)
 
     remaining = []
     for projectile in room.projectiles:
         hit = False
         shooter = room.players.get(projectile["owner"])
         if not shooter:
-            if projectile.get("owner") == "boss":
-                for player in room.players.values():
-                    if not player.alive:
-                        continue
-                    if _circle_hit(projectile["x"], projectile["y"], PROJECTILE_RADIUS, player.x, player.y, PLAYER_RADIUS):
-                        player.rings_left = 0
-                        player.alive = False
-                        hit = True
-                        break
-                if not hit:
-                    remaining.append(projectile)
             continue
         for player in room.players.values():
             if player.sid == projectile["owner"]:
@@ -1632,27 +2148,6 @@ def _update_snowball(room, dt):
             remaining.append(projectile)
     room.projectiles = remaining
 
-    boss = next((monster for monster in room.monsters if monster.get("type") == "boss"), None)
-    if boss:
-        remaining = []
-        for projectile in room.projectiles:
-            if projectile.get("owner") == "boss":
-                remaining.append(projectile)
-                continue
-            if _circle_hit(projectile["x"], projectile["y"], PROJECTILE_RADIUS, boss["x"], boss["y"], boss["radius"]):
-                shooter = room.players.get(projectile.get("owner"))
-                if shooter:
-                    shooter.score += 3
-                    shooter.round_score += 3
-                boss["hp"] = max(0, boss.get("hp", SNOWBALL_BOSS_HP) - 1)
-            else:
-                remaining.append(projectile)
-        room.projectiles = remaining
-        if boss.get("hp", 0) <= 0:
-            room.monsters = [monster for monster in room.monsters if monster.get("type") != "boss"]
-            room.snowball_boss_active = False
-            _announce(room, "Boss defeated! Bonus points!", duration=3.5)
-
 
 def _update_ice(room, dt):
     difficulty = _ice_difficulty(room)
@@ -1672,9 +2167,8 @@ def _update_ice(room, dt):
         player.input_y = 1.0
         player.facing_x = direction
         player.facing_y = 1.0
-        player.x = _clamp(
-            player.x + direction * ICE_STRAFE_SPEED * dt, PLAYER_RADIUS, room.width - PLAYER_RADIUS
-        )
+        speed = ICE_STRAFE_SPEED * _player_speed_multiplier(player)
+        player.x = _clamp(player.x + direction * speed * dt, PLAYER_RADIUS, room.width - PLAYER_RADIUS)
         player.y = player_y
         player.score_accum += dt
         while player.score_accum >= 1.0:
@@ -1689,9 +2183,13 @@ def _update_ice(room, dt):
             for deco in room.decorations:
                 deco["y"] -= scroll
             room.decorations = [deco for deco in room.decorations if deco["y"] > -ICE_TREE_BUFFER]
+        tree_ramp = max(
+            1.0,
+            min(room.round_duration - ICE_START_BUFFER, ICE_TREE_RAMP_TIME),
+        )
         density = max(
             0.0,
-            min(1.0, (room.round_elapsed - ICE_START_BUFFER) / max(1.0, room.round_duration - ICE_START_BUFFER)),
+            min(1.0, (room.round_elapsed - ICE_START_BUFFER) / tree_ramp),
         )
         base_target = _ice_tree_target(room)
         target_trees = int(base_target * (0.2 + 0.8 * density) * (1.0 + ICE_TREE_RAMP * difficulty))
@@ -1722,6 +2220,46 @@ def _update_ice(room, dt):
             if not collected:
                 remaining_gifts.append(gift)
         room.gifts = remaining_gifts
+
+    room.ice_snow_accum += dt
+    while room.ice_snow_accum >= ICE_SNOWFLAKE_INTERVAL:
+        _spawn_hazard(room)
+        room.ice_snow_accum -= ICE_SNOWFLAKE_INTERVAL
+
+    room.ice_snowball_accum += dt
+    while room.ice_snowball_accum >= ICE_SNOWBALL_INTERVAL:
+        _spawn_big_snowball(room)
+        room.ice_snowball_accum -= ICE_SNOWBALL_INTERVAL
+
+    hazards = []
+    for hazard in room.hazards:
+        if hazard.get("type") == "big_snowball":
+            hazard["x"] += hazard.get("vx", 0.0) * dt
+            hazard["y"] += hazard.get("vy", 0.0) * dt
+            radius = hazard.get("radius", HAZARD_RADIUS)
+            if (
+                hazard["x"] < -radius
+                or hazard["x"] > room.width + radius
+                or hazard["y"] < -radius
+                or hazard["y"] > room.height + radius
+            ):
+                continue
+        else:
+            hazard["y"] += hazard.get("vy", 0.0) * dt
+            if hazard["y"] > room.height + 30:
+                continue
+            radius = HAZARD_RADIUS
+        hit = False
+        for player in room.players.values():
+            if not player.alive:
+                continue
+            if _circle_hit(hazard["x"], hazard["y"], radius, player.x, player.y, PLAYER_RADIUS):
+                player.alive = False
+                hit = True
+                break
+        if not hit:
+            hazards.append(hazard)
+    room.hazards = hazards
 
     if not room.ice_finish_line_spawned and room.round_elapsed >= room.round_duration - ICE_FINISH_LEAD:
         _spawn_ice_finish_line(room)
@@ -1943,7 +2481,7 @@ def _update_bonus(room, dt):
 
 
 def _world_loop():
-    tick_rate = 1.0 / 20.0
+    tick_rate = 1.0 / 30.0
     while True:
         socketio.sleep(tick_rate)
         rooms = state.list_rooms()
@@ -1971,6 +2509,8 @@ def _world_loop():
                         _update_survival(room, dt)
                     elif room.round_type == "snowball":
                         _update_snowball(room, dt)
+                    elif room.round_type == "hunt":
+                        _update_hunt(room, dt)
                     elif room.round_type == "ice":
                         _update_ice(room, dt)
                     elif room.round_type == "maze":
@@ -1979,6 +2519,8 @@ def _world_loop():
                         _update_light(room, dt)
                     elif room.round_type == "trails":
                         _update_trails(room, dt)
+                    elif room.round_type == "hill":
+                        _update_hill(room, dt)
                     elif room.round_type == "bonus":
                         _update_bonus(room, dt)
                     if room.players and not any(player.alive for player in room.players.values()):

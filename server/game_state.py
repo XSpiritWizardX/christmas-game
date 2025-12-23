@@ -28,6 +28,10 @@ PLAYER_COLORS = [
 ]
 
 
+def _is_holly(name):
+    return (name or "").strip().lower() == "holly"
+
+
 def _generate_room_code(existing_codes):
     letters = string.ascii_uppercase
     while True:
@@ -69,6 +73,8 @@ class PlayerState:
     ai_dir_x: float = 0.0
     ai_dir_y: float = 0.0
     ai_idle_until: float = 0.0
+    dash_ready_ts: float = 0.0
+    stun_until: float = 0.0
 
 
 @dataclass
@@ -95,12 +101,17 @@ class RoomState:
     gifts: list = field(default_factory=list)
     walls: list = field(default_factory=list)
     light: dict = field(default_factory=dict)
+    hill: dict = field(default_factory=dict)
     trails: list = field(default_factory=list)
     trail_map: dict = field(default_factory=dict)
     last_update_ts: float = field(default_factory=time.time)
     tick: int = 0
     hazard_accum: float = 0.0
     gift_accum: float = 0.0
+    hill_snow_accum: float = 0.0
+    hill_fall_accum: float = 0.0
+    ice_snow_accum: float = 0.0
+    ice_snowball_accum: float = 0.0
     next_projectile_id: int = 1
     next_item_id: int = 1
     next_monster_id: int = 1
@@ -123,12 +134,25 @@ class GameState:
         self.rooms = {}
         self.lock = threading.Lock()
 
-    def _pick_available_color(self, room):
+    def _pick_available_color(self, room, exclude=None):
         used = {player.color for player in room.players.values()}
         for color in PLAYER_COLORS:
+            if exclude and color == exclude:
+                continue
             if color not in used:
                 return color
         return ""
+
+    def _reserve_black_for_holly(self, room, holly_sid):
+        taken_by = next(
+            (player for player in room.players.values() if player.color == "black"),
+            None,
+        )
+        if taken_by and taken_by.sid != holly_sid:
+            fallback = self._pick_available_color(room, exclude="black")
+            if fallback:
+                taken_by.color = fallback
+        return "black"
 
     def _color_taken(self, room, color):
         return any(player.color == color for player in room.players.values())
@@ -143,7 +167,10 @@ class GameState:
         with self.lock:
             code = _generate_room_code(self.rooms.keys())
             room = RoomState(code=code, host_sid=sid)
-            chosen = color if color in PLAYER_COLORS else ""
+            if _is_holly(name):
+                chosen = "black"
+            else:
+                chosen = color if color in PLAYER_COLORS else ""
             if not chosen:
                 chosen = self._pick_available_color(room)
             player = PlayerState(sid=sid, name=name, color=chosen)
@@ -161,9 +188,20 @@ class GameState:
                 return None, "Room already started"
             if len(room.players) >= MAX_PLAYERS:
                 return None, "Room is full"
-            chosen = color if color in PLAYER_COLORS and not self._color_taken(room, color) else ""
-            if not chosen:
-                chosen = self._pick_available_color(room)
+            if _is_holly(name):
+                chosen = self._reserve_black_for_holly(room, sid)
+            else:
+                holly_active = any(_is_holly(player.name) for player in room.players.values())
+                if color == "black" and holly_active:
+                    chosen = ""
+                else:
+                    chosen = (
+                        color
+                        if color in PLAYER_COLORS and not self._color_taken(room, color)
+                        else ""
+                    )
+                if not chosen:
+                    chosen = self._pick_available_color(room)
             if not chosen:
                 return None, "No colors available"
             player = PlayerState(sid=sid, name=name, color=chosen)
@@ -249,6 +287,7 @@ class GameState:
                     "alive": player.alive,
                     "ringsLeft": player.rings_left,
                     "isBot": player.is_bot,
+                    "dashReadyAt": player.dash_ready_ts,
                 }
             )
         return {
@@ -314,9 +353,15 @@ class GameState:
         if color not in PLAYER_COLORS:
             return room, "Pick a valid color"
         with room.lock:
-            if self._color_taken(room, color):
-                return room, "Color already taken"
             player = room.players.get(sid)
             if player:
-                player.color = color
+                if _is_holly(player.name):
+                    player.color = self._reserve_black_for_holly(room, sid)
+                else:
+                    holly_active = any(_is_holly(member.name) for member in room.players.values())
+                    if color == "black" and holly_active:
+                        return room, "Black is reserved for Holly"
+                    if self._color_taken(room, color):
+                        return room, "Color already taken"
+                    player.color = color
         return room, None
