@@ -88,6 +88,7 @@ TRAIL_TILE_SIZE = 16.0
 TRAIL_TILE_POINTS = 1
 TRAIL_START_BUFFER = 2.0
 TRAIL_MAX_POINTS = 100000
+TRAIL_FULL_SYNC_TICKS = 30
 TREE_RADIUS = 22.0
 TREE_SIZES = {
     "small": {"draw": 32, "radius": 16},
@@ -194,6 +195,17 @@ def _room_payload(room):
 
 
 def _world_payload(room):
+    trails_full = False
+    trail_updates = []
+    trails = list(room.trails)
+    if room.round_type == "trails":
+        trails_full = room.tick % TRAIL_FULL_SYNC_TICKS == 0 or not room.trail_map
+        if trails_full:
+            trail_updates = []
+        else:
+            trails = []
+            trail_updates = list(room.trails_dirty)
+        room.trails_dirty = []
     players = []
     for player in room.players.values():
         players.append(
@@ -238,7 +250,9 @@ def _world_payload(room):
             "hazards": list(room.hazards),
             "gifts": list(room.gifts),
             "walls": list(room.walls),
-            "trails": list(room.trails),
+            "trails": trails,
+            "trailUpdates": trail_updates,
+            "trailsFull": trails_full,
             "light": dict(room.light) if room.light else {},
             "hill": dict(room.hill) if room.hill else {},
         },
@@ -1154,6 +1168,7 @@ def _setup_round(room, round_type):
     room.hill = {}
     room.trails = []
     room.trail_map = {}
+    room.trails_dirty = []
     room.hazard_accum = 0.0
     room.gift_accum = 0.0
     room.hill_snow_accum = 0.0
@@ -1346,6 +1361,15 @@ def _add_trail_tile(room, player, tx, ty):
     }
     room.trail_map[key] = tile
     room.trails.append(tile)
+    room.trails_dirty.append(
+        {
+            "x": tile["x"],
+            "y": tile["y"],
+            "size": tile["size"],
+            "color": tile["color"],
+            "owner": tile["owner"],
+        }
+    )
     if len(room.trails) > TRAIL_MAX_POINTS:
         room.trails = room.trails[-TRAIL_MAX_POINTS:]
         room.trail_map = {(int(t["x"] // size), int(t["y"] // size)): t for t in room.trails}
@@ -1361,6 +1385,15 @@ def _set_trail_tile(room, player, tx, ty):
             return False
         existing["color"] = player.color
         existing["owner"] = player.sid
+        room.trails_dirty.append(
+            {
+                "x": existing["x"],
+                "y": existing["y"],
+                "size": existing["size"],
+                "color": existing["color"],
+                "owner": existing["owner"],
+            }
+        )
         return True
     return _add_trail_tile(room, player, tx, ty)
 
@@ -1760,7 +1793,8 @@ def _update_ai(room, now):
             player.input_y = 0.0
             continue
         if room.status in {"lobby", "between_rounds"}:
-            _ai_wander(room, player, now)
+            player.input_x = 0.0
+            player.input_y = 0.0
             continue
         if room.status != "in_round":
             player.input_x = 0.0

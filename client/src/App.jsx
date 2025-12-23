@@ -162,6 +162,7 @@ export default function App() {
   const inputRef = useRef({ x: 0, y: 0 });
   const audioRef = useRef(null);
   const currentTrackRef = useRef("");
+  const trailIndexRef = useRef(new Map());
   const sfxRef = useRef({
     whoosh: { pool: [], index: 0 },
     collect: { pool: [], index: 0 }
@@ -206,7 +207,40 @@ export default function App() {
       setWorld((prev) => mergeWorldWithRoom(prev, payload.room));
     });
     socket.on("world_state", (payload) => {
-      setWorld(payload.world);
+      setWorld((prev) => {
+        const nextWorld = payload.world;
+        if (!nextWorld) return prev;
+        const trailsFull = Boolean(nextWorld.trailsFull);
+        const updates = nextWorld.trailUpdates || [];
+        if (!trailsFull && updates.length === 0) {
+          return nextWorld;
+        }
+        const trailIndex = trailIndexRef.current;
+        let mergedTrails = trailsFull ? [] : [...(prev?.trails || [])];
+        if (trailsFull) {
+          trailIndex.clear();
+          mergedTrails = Array.isArray(nextWorld.trails) ? [...nextWorld.trails] : [];
+          mergedTrails.forEach((trail, idx) => {
+            trailIndex.set(`${trail.x}|${trail.y}`, idx);
+          });
+        }
+        if (updates.length) {
+          updates.forEach((trail) => {
+            const key = `${trail.x}|${trail.y}`;
+            const existingIndex = trailIndex.get(key);
+            if (existingIndex !== undefined) {
+              mergedTrails[existingIndex] = trail;
+            } else {
+              trailIndex.set(key, mergedTrails.length);
+              mergedTrails.push(trail);
+            }
+          });
+        }
+        return {
+          ...nextWorld,
+          trails: mergedTrails,
+        };
+      });
       setRoom((prev) => {
         if (!payload.room) return prev;
         return { ...payload.room, players: payload.world.players };

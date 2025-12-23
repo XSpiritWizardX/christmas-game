@@ -159,6 +159,7 @@ const drawFeet = (ctx, left, top, pixel, color, step, direction) => {
 export default function GameCanvas({ world, room, youId, roundType }) {
   const canvasRef = useRef(null);
   const assetsRef = useRef(null);
+  const lastRenderRef = useRef(0);
 
   useEffect(() => {
     if (assetsRef.current) return;
@@ -189,6 +190,11 @@ export default function GameCanvas({ world, room, youId, roundType }) {
     const canvas = canvasRef.current;
     const snapshot = world && world.players ? world : roomToWorld(room);
     if (!canvas || !snapshot) return;
+    const nowMs = performance.now();
+    const isMobile = navigator.maxTouchPoints > 0 || window.innerWidth < 900;
+    const minFrame = isMobile ? 33 : 0;
+    if (nowMs - lastRenderRef.current < minFrame) return;
+    lastRenderRef.current = nowMs;
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     const width = canvas.clientWidth;
