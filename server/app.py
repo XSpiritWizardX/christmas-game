@@ -3014,6 +3014,12 @@ def handle_start_game(_data=None):
         order = list(ROUND_SEQUENCE)
         if random.random() < BONUS_CHANCE:
             order.append("bonus")
+        if "thin_ice" in order:
+            order = [round_name for round_name in order if round_name != "thin_ice"]
+            random.shuffle(order)
+            order.insert(0, "thin_ice")
+        else:
+            random.shuffle(order)
         room.round_order = order
         room.max_rounds = len(order)
         room.width = BASE_WIDTH
