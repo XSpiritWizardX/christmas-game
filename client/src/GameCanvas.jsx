@@ -299,7 +299,11 @@ export default function GameCanvas({ world, room, youId, roundType }) {
       const maxX = fitsWidth ? worldWidth : camX + viewWidth + 32;
       const minY = fitsHeight ? 0 : camY - 32;
       const maxY = fitsHeight ? worldHeight : camY + viewHeight + 32;
-      snapshot.trails.forEach((trail) => {
+      const trailBudgetMs = 6;
+      const trailStart = performance.now();
+      for (let i = snapshot.trails.length - 1; i >= 0; i -= 1) {
+        if (performance.now() - trailStart > trailBudgetMs) break;
+        const trail = snapshot.trails[i];
         const size = trail.size || 16;
         if (
           trail.x + size < minX ||
@@ -307,12 +311,12 @@ export default function GameCanvas({ world, room, youId, roundType }) {
           trail.y + size < minY ||
           trail.y > maxY
         ) {
-          return;
+          continue;
         }
         const trailColor = COLOR_HEX[trail.color] || "#f2c14e";
         ctx.fillStyle = trailColor;
         ctx.fillRect(trail.x, trail.y, size, size);
-      });
+      }
     }
 
     const images = assetsRef.current;

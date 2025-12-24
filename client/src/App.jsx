@@ -58,15 +58,15 @@ const roundName = (roundType) => {
     case "snowball":
       return "Round 4 - Snowball Fight";
     case "hunt":
-      return "Round 2 - Monster Hunt";
+      return "Round 3 - Monster Hunt";
     case "light":
       return "Round 6 - Carry the Light";
     case "ice":
       return "Round 7 - Ice Slide";
     case "trails":
-      return "Round 3 - Glow Trails";
+      return "Round 1 - Glow Trails";
     case "hill":
-      return "Round 1 - King of the Hill";
+      return "Round 2 - King of the Hill";
     case "bonus":
       return "Bonus Round - Tap";
     default:
@@ -160,6 +160,8 @@ const mergeWorldWithRoom = (prevWorld, room) => {
 export default function App() {
   const socketRef = useRef(null);
   const inputRef = useRef({ x: 0, y: 0 });
+  const lastInputSentRef = useRef(0);
+  const lastInputValueRef = useRef({ x: 0, y: 0 });
   const audioRef = useRef(null);
   const currentTrackRef = useRef("");
   const sfxRef = useRef({
@@ -206,7 +208,39 @@ export default function App() {
       setWorld((prev) => mergeWorldWithRoom(prev, payload.room));
     });
     socket.on("world_state", (payload) => {
-      setWorld(payload.world);
+      setWorld((prev) => {
+        const nextWorld = payload.world;
+        if (!nextWorld) return prev;
+        if (nextWorld.trailsFull === false) {
+          const merged = prev?.trails ? [...prev.trails] : [];
+          const updates = nextWorld.trailUpdates || [];
+          if (updates.length) {
+            const index = new Map();
+            merged.forEach((trail, idx) => {
+              index.set(`${trail.x}|${trail.y}`, idx);
+            });
+            updates.forEach((trail) => {
+              const key = `${trail.x}|${trail.y}`;
+              const existing = index.get(key);
+              if (existing !== undefined) {
+                const lastIndex = merged.length - 1;
+                if (existing !== lastIndex) {
+                  const lastTrail = merged[lastIndex];
+                  merged[existing] = lastTrail;
+                  index.set(`${lastTrail.x}|${lastTrail.y}`, existing);
+                }
+                merged[lastIndex] = trail;
+                index.set(key, lastIndex);
+              } else {
+                index.set(key, merged.length);
+                merged.push(trail);
+              }
+            });
+          }
+          return { ...nextWorld, trails: merged };
+        }
+        return nextWorld;
+      });
       setRoom((prev) => {
         if (!payload.room) return prev;
         return { ...payload.room, players: payload.world.players };
@@ -476,6 +510,15 @@ export default function App() {
 
   const handleJoystick = (x, y) => {
     inputRef.current = { x, y };
+    const now = performance.now();
+    const last = lastInputSentRef.current;
+    const lastValue = lastInputValueRef.current;
+    const changed = lastValue.x !== x || lastValue.y !== y;
+    if (changed && now - last >= 16) {
+      lastInputSentRef.current = now;
+      lastInputValueRef.current = { x, y };
+      emit("player_input", { x, y });
+    }
   };
 
   const isHost = room?.hostId === youId;
@@ -495,12 +538,14 @@ export default function App() {
       return "Throw";
     if (room.roundType === "hunt" || room.roundType === "hill")
       return "Throw";
-    if (room.roundType === "trails") return "Trail";
+    if (room.roundType === "trails") return "Splash";
     if (room.roundType === "bonus") return "Tap!";
     return "Action";
   })();
 
-  const actionDisabled = room?.roundType === "trails";
+  const splashReadyAt = you?.dashReadyAt ?? 0;
+  const splashReady = Date.now() / 1000 >= splashReadyAt;
+  const actionDisabled = room?.roundType === "trails" ? !splashReady : false;
 
   useEffect(() => {
     const gifts = world?.gifts || [];
