@@ -3,6 +3,7 @@ import string
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import Optional, Tuple
 
 MAX_PLAYERS = 16
 ROOM_WIDTH = 960
@@ -75,6 +76,7 @@ class PlayerState:
     ai_idle_until: float = 0.0
     dash_ready_ts: float = 0.0
     stun_until: float = 0.0
+    thin_ice_last_key: Optional[Tuple[int, int]] = None
 
 
 @dataclass
@@ -113,6 +115,8 @@ class RoomState:
     hill_fall_accum: float = 0.0
     ice_snow_accum: float = 0.0
     ice_snowball_accum: float = 0.0
+    thin_ice_broken: set = field(default_factory=set)
+    thin_ice_dirty: list = field(default_factory=list)
     next_projectile_id: int = 1
     next_item_id: int = 1
     next_monster_id: int = 1

@@ -34,12 +34,13 @@ const COLOR_LOOKUP = PLAYER_COLORS.reduce((acc, color) => {
 }, {});
 
 const MUSIC_TRACKS = {
-  menu: "/assets/audio/The_Christmas_Spirit_is_Here_2025-12-23T171642.wav",
-  lobby: "/assets/audio/gamergang-silent-moments-258504.mp3",
+  menu: "/assets/audio/gamergang-silent-moments-258504.mp3",
+  lobby: "/assets/audio/The_Christmas_Spirit_is_Here_2025-12-23T171642.wav",
   trails: "/assets/audio/i-love-my-8-bit-game-console-301272.mp3",
   snowball: "/assets/audio/chiptune-symphony-8bit-game-theme-music-381366.mp3",
   hunt: "/assets/audio/christmas-snowball-fight-loop-125954.mp3",
   hill: "/assets/audio/gamergang-echoes-of-tomorrow-258508.mp3",
+  thin_ice: "/assets/audio/round-ice.wav",
   light: "/assets/audio/soft-christmas-song-no-copyright-music-437579.mp3",
   ice: "/assets/audio/retro-chiptune-adventure-8-bit-video-game-music-318059.mp3",
   survival: "/assets/audio/A_Gamers_Christmas_Wish_2025-12-23T170832.wav"
@@ -59,12 +60,14 @@ const roundName = (roundType) => {
       return "Round 4 - Snowball Fight";
     case "hunt":
       return "Round 3 - Monster Hunt";
+    case "thin_ice":
+      return "Round 1 - Thin Ice";
     case "light":
       return "Round 6 - Carry the Light";
     case "ice":
       return "Round 7 - Ice Slide";
     case "trails":
-      return "Round 1 - Glow Trails";
+      return "Glow Trails";
     case "hill":
       return "Round 2 - King of the Hill";
     case "bonus":
@@ -82,6 +85,8 @@ const roundLabel = (roundType) => {
       return "Snowball Fight";
     case "hunt":
       return "Monster Hunt";
+    case "thin_ice":
+      return "Thin Ice";
     case "light":
       return "Carry the Light";
     case "ice":
@@ -100,19 +105,21 @@ const roundLabel = (roundType) => {
 const roundInstruction = (roundType) => {
   switch (roundType) {
     case "survival":
-      return "Dodge falling snowflakes and grab candy for points.";
+      return "Dodge falling snowflakes and grab candy for points. Defeat the enemies to even the odds.";
     case "snowball":
       return "Players are separated into two teams. Players have three health. Throw snowballs to eliminate the other team. Watch for big snowballs crossing the map.";
     case "hunt":
       return "Monsters charge from every side. Hit them for points as the waves get tougher.";
+    case "thin_ice":
+      return "Every step breaks the ice. Keep moving no matter hwat. Dash to jump over broken ice. Points every second";
     case "light":
       return "The christmas light will spawn randomly on the map. Hold the light to score up to twenty seconds; pass it to nearby players. And travel near the light holder for points. If hit, it drops.";
     case "ice":
-      return "Stay alive on the slope. Avoid trees; points each second.";
+      return "Stay alive on the slope. Avoid trees and monsters and snowflakes; collect stars and points each second.";
     case "trails":
       return "Fill the map with your color. Avoid other trails to survive.";
     case "hill":
-      return "Fight up the hill. Score while standing on the hill and for hitting monsters.";
+      return "Fight up the hill. Score while standing on the hill.";
     case "bonus":
       return "Tap fast to rack up points.";
     default:
@@ -142,7 +149,8 @@ const roomToWorld = (room) => {
     walls: [],
     trails: [],
     light: {},
-    hill: {}
+    hill: {},
+    thinIce: {}
   };
 };
 
@@ -164,6 +172,7 @@ export default function App() {
   const lastInputValueRef = useRef({ x: 0, y: 0 });
   const audioRef = useRef(null);
   const currentTrackRef = useRef("");
+  const thinIceIndexRef = useRef(new Set());
   const sfxRef = useRef({
     whoosh: { pool: [], index: 0 },
     collect: { pool: [], index: 0 }
@@ -211,6 +220,32 @@ export default function App() {
       setWorld((prev) => {
         const nextWorld = payload.world;
         if (!nextWorld) return prev;
+        const thinIce = nextWorld.thinIce;
+        if (thinIce && thinIce.brokenFull === false) {
+          const broken = prev?.thinIce?.broken ? [...prev.thinIce.broken] : [];
+          const index = thinIceIndexRef.current;
+          if (index.size === 0 && broken.length) {
+            broken.forEach((entry) => {
+              index.add(`${entry[0]}|${entry[1]}`);
+            });
+          }
+          const updates = thinIce.brokenUpdates || [];
+          updates.forEach((entry) => {
+            const key = `${entry[0]}|${entry[1]}`;
+            if (!index.has(key)) {
+              index.add(key);
+              broken.push(entry);
+            }
+          });
+          return {
+            ...nextWorld,
+            thinIce: {
+              ...thinIce,
+              broken,
+              brokenFull: true,
+            },
+          };
+        }
         if (nextWorld.trailsFull === false) {
           const merged = prev?.trails ? [...prev.trails] : [];
           const updates = nextWorld.trailUpdates || [];
@@ -238,6 +273,14 @@ export default function App() {
             });
           }
           return { ...nextWorld, trails: merged };
+        }
+        if (thinIce && thinIce.brokenFull) {
+          const nextBroken = thinIce.broken || [];
+          const index = thinIceIndexRef.current;
+          index.clear();
+          nextBroken.forEach((entry) => {
+            index.add(`${entry[0]}|${entry[1]}`);
+          });
         }
         return nextWorld;
       });
@@ -538,14 +581,18 @@ export default function App() {
       return "Throw";
     if (room.roundType === "hunt" || room.roundType === "hill")
       return "Throw";
+    if (room.roundType === "thin_ice")
+      return "Dash";
     if (room.roundType === "trails") return "Splash";
     if (room.roundType === "bonus") return "Tap!";
     return "Action";
   })();
 
-  const splashReadyAt = you?.dashReadyAt ?? 0;
-  const splashReady = Date.now() / 1000 >= splashReadyAt;
-  const actionDisabled = room?.roundType === "trails" ? !splashReady : false;
+  const dashReadyAt = you?.dashReadyAt ?? 0;
+  const dashReady = Date.now() / 1000 >= dashReadyAt;
+  const actionDisabled = ["trails", "thin_ice"].includes(room?.roundType)
+    ? !dashReady
+    : false;
 
   useEffect(() => {
     const gifts = world?.gifts || [];

@@ -13,12 +13,13 @@ app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 state = GameState()
 
-ROUND_SEQUENCE = ["trails", "hill", "hunt", "snowball", "survival", "light", "ice"]
+ROUND_SEQUENCE = ["snowball", "survival", "hunt", "thin_ice", "hill", "light", "ice"]
 ROUND_DURATIONS = {
     "survival": 65,
     "snowball": 120,
     "hunt": 120,
     "hill": 120,
+    "thin_ice": 180,
     "light": 120,
     "ice": 180,
     "trails": 180,
@@ -82,6 +83,11 @@ HILL_STUN_DURATION = 0.6
 HILL_SNOWBALL_INTERVAL = 0.7
 HILL_FALLING_INTERVAL = 0.5
 HILL_TREE_COUNT = 60
+THIN_ICE_TILE_SIZE = 32
+THIN_ICE_SYNC_TICKS = 8
+THIN_ICE_POINTS_PER_SECOND = 2
+THIN_ICE_DASH_DISTANCE = 160.0
+THIN_ICE_DASH_COOLDOWN = 4.0
 TRAIL_SPLASH_COOLDOWN = 5.0
 TRAIL_SPLASH_RADIUS = 6
 TRAIL_TILE_SIZE = 16.0
@@ -121,8 +127,10 @@ ICE_WIDTH = 2400
 ICE_HEIGHT = 1600
 LARGE_WIDTH = 6000
 LARGE_HEIGHT = 3600
-HILL_WIDTH = 2400
-HILL_HEIGHT = 3200
+HILL_WIDTH = 2800
+HILL_HEIGHT = 3600
+THIN_ICE_WIDTH = 2100
+THIN_ICE_HEIGHT = 2600
 
 SURVIVAL_GIFT_POINTS = 5
 MAZE_GIFT_POINTS = 10
@@ -203,6 +211,21 @@ def _world_payload(room):
             trails = []
     trail_updates = list(room.trails_dirty) if room.round_type == "trails" else []
     room.trails_dirty = []
+    thin_ice = {}
+    if room.round_type == "thin_ice":
+        thin_full = room.tick % THIN_ICE_SYNC_TICKS == 0 or not room.thin_ice_broken
+        if thin_full:
+            broken = [[tx, ty] for (tx, ty) in room.thin_ice_broken]
+        else:
+            broken = []
+        updates = list(room.thin_ice_dirty)
+        room.thin_ice_dirty = []
+        thin_ice = {
+            "tileSize": THIN_ICE_TILE_SIZE,
+            "broken": broken,
+            "brokenUpdates": updates,
+            "brokenFull": thin_full,
+        }
     players = []
     for player in room.players.values():
         players.append(
@@ -250,6 +273,7 @@ def _world_payload(room):
             "trails": trails,
             "trailsFull": trails_full,
             "trailUpdates": trail_updates,
+            "thinIce": thin_ice,
             "light": dict(room.light) if room.light else {},
             "hill": dict(room.hill) if room.hill else {},
         },
@@ -656,6 +680,28 @@ def _move_entity(room, x, y, dx, dy, speed, dt, radius):
     return new_x, new_y
 
 
+def _dash_player(room, player, distance, cooldown):
+    now = time.time()
+    if now < player.dash_ready_ts:
+        return
+    dx = player.input_x
+    dy = player.input_y
+    if abs(dx) < 0.1 and abs(dy) < 0.1:
+        dx = player.facing_x
+        dy = player.facing_y
+    mag = math.hypot(dx, dy)
+    if mag <= 0.01:
+        return
+    dx /= mag
+    dy /= mag
+    player.facing_x = dx
+    player.facing_y = dy
+    player.dash_ready_ts = now + cooldown
+    player.x, player.y = _move_entity(
+        room, player.x, player.y, dx, dy, distance, 1.0, PLAYER_RADIUS
+    )
+
+
 def _spawn_snowball(room, player):
     now = time.time()
     if now - player.last_action_ts < 0.25:
@@ -736,6 +782,8 @@ def _perform_action(room, player):
                 light["y"] = target.y
         else:
             _spawn_snowball(room, player)
+    elif room.round_type == "thin_ice":
+        _dash_player(room, player, THIN_ICE_DASH_DISTANCE, THIN_ICE_DASH_COOLDOWN)
     elif room.round_type == "trails":
         _splash_trail(room, player)
     elif room.round_type == "maze":
@@ -1147,6 +1195,8 @@ def _setup_round(room, round_type):
     room.hill_fall_accum = 0.0
     room.ice_snow_accum = 0.0
     room.ice_snowball_accum = 0.0
+    room.thin_ice_broken = set()
+    room.thin_ice_dirty = []
     room.round_elapsed = 0.0
     room.ice_finish_line_spawned = False
     room.ice_buffer_until = 0.0
@@ -1164,6 +1214,9 @@ def _setup_round(room, round_type):
     elif round_type == "hill":
         room.width = HILL_WIDTH
         room.height = HILL_HEIGHT
+    elif round_type == "thin_ice":
+        room.width = THIN_ICE_WIDTH
+        room.height = THIN_ICE_HEIGHT
     elif round_type in {"snowball", "light", "trails", "hunt", "hill"}:
         room.width = LARGE_WIDTH
         room.height = LARGE_HEIGHT
@@ -1201,6 +1254,7 @@ def _setup_round(room, round_type):
         player.vel_y = 0.0
         player.dash_ready_ts = 0.0
         player.stun_until = 0.0
+        player.thin_ice_last_key = None
         if player.is_bot:
             player.ai_next_action_ts = 0.0
             player.ai_next_decision_ts = 0.0
@@ -1232,7 +1286,7 @@ def _setup_round(room, round_type):
         red_team = [player for player in players if player.team == 1]
         _edge_spawns(room, blue_team, start_angle=math.pi / 2, end_angle=3 * math.pi / 2)
         _edge_spawns(room, red_team, start_angle=-math.pi / 2, end_angle=math.pi / 2)
-    elif round_type in {"light", "trails", "hunt", "hill"}:
+    elif round_type in {"light", "trails", "hunt", "hill", "thin_ice"}:
         _edge_spawns(room, players)
 
     if round_type == "hill":
@@ -1730,6 +1784,28 @@ def _update_hill(room, dt):
                 player.alive = False
 
 
+def _update_thin_ice(room, dt):
+    for player in room.players.values():
+        if not player.alive:
+            continue
+        _move_with_walls(room, player, dt, PLAYER_SPEED)
+        tx = int(player.x // THIN_ICE_TILE_SIZE)
+        ty = int(player.y // THIN_ICE_TILE_SIZE)
+        key = (tx, ty)
+        if key in room.thin_ice_broken and key != player.thin_ice_last_key:
+            player.alive = False
+            continue
+        if key not in room.thin_ice_broken:
+            room.thin_ice_broken.add(key)
+            room.thin_ice_dirty.append([tx, ty])
+        player.thin_ice_last_key = key
+        player.score_accum += dt * THIN_ICE_POINTS_PER_SECOND
+        while player.score_accum >= 1.0:
+            player.score += 1
+            player.round_score += 1
+            player.score_accum -= 1.0
+
+
 def _handle_light_projectiles(room):
     if not room.projectiles:
         return
@@ -1988,6 +2064,13 @@ def _update_ai(room, now):
                 _ai_wander(room, player, now, speed=0.6)
             else:
                 _ai_target_point(room, player, now, speed=0.7)
+            continue
+
+        if room.round_type == "thin_ice":
+            if random.random() < AI_WANDER_CHANCE:
+                _ai_wander(room, player, now, speed=0.6)
+            else:
+                _ai_target_point(room, player, now, speed=0.65)
             continue
 
         if room.round_type == "ice":
@@ -2526,6 +2609,8 @@ def _world_loop():
                         _update_snowball(room, dt)
                     elif room.round_type == "hunt":
                         _update_hunt(room, dt)
+                    elif room.round_type == "thin_ice":
+                        _update_thin_ice(room, dt)
                     elif room.round_type == "ice":
                         _update_ice(room, dt)
                     elif room.round_type == "maze":

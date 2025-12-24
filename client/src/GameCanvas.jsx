@@ -100,7 +100,8 @@ const roomToWorld = (room) => {
     walls: [],
     trails: [],
     light: {},
-    hill: {}
+    hill: {},
+    thinIce: {}
   };
 };
 
@@ -237,6 +238,27 @@ export default function GameCanvas({ world, room, youId, roundType }) {
 
     ctx.fillStyle = "#f4fbff";
     ctx.fillRect(0, 0, worldWidth, worldHeight);
+
+    if (snapshot.thinIce && snapshot.thinIce.broken && snapshot.thinIce.broken.length) {
+      const tileSize = snapshot.thinIce.tileSize || 32;
+      const minX = fitsWidth ? 0 : camX - tileSize;
+      const maxX = fitsWidth ? worldWidth : camX + viewWidth + tileSize;
+      const minY = fitsHeight ? 0 : camY - tileSize;
+      const maxY = fitsHeight ? worldHeight : camY + viewHeight + tileSize;
+      const budgetMs = 5;
+      const start = performance.now();
+      ctx.fillStyle = "rgba(36, 57, 79, 0.9)";
+      for (let i = snapshot.thinIce.broken.length - 1; i >= 0; i -= 1) {
+        if (performance.now() - start > budgetMs) break;
+        const entry = snapshot.thinIce.broken[i];
+        const x = entry[0] * tileSize;
+        const y = entry[1] * tileSize;
+        if (x + tileSize < minX || x > maxX || y + tileSize < minY || y > maxY) {
+          continue;
+        }
+        ctx.fillRect(x, y, tileSize, tileSize);
+      }
+    }
 
     const outerBorder = 6;
     const innerBorder = 3;
@@ -567,7 +589,7 @@ export default function GameCanvas({ world, room, youId, roundType }) {
 
     ctx.restore();
 
-    if (roundType && ["snowball", "light", "trails", "hunt", "hill"].includes(roundType)) {
+    if (roundType && ["snowball", "light", "trails", "hunt", "hill", "thin_ice"].includes(roundType)) {
       const mapPadding = 12;
       let mapWidth = 105;
       let mapHeight = (mapWidth * worldHeight) / worldWidth;
@@ -611,6 +633,22 @@ export default function GameCanvas({ world, room, youId, roundType }) {
         ctx.beginPath();
         ctx.arc(toMapX(snapshot.light.x), toMapY(snapshot.light.y), 3, 0, Math.PI * 2);
         ctx.fill();
+      }
+
+      if (snapshot.thinIce && snapshot.thinIce.broken && snapshot.thinIce.broken.length) {
+        const tileSize = snapshot.thinIce.tileSize || 32;
+        ctx.fillStyle = "rgba(36, 57, 79, 0.7)";
+        for (let i = snapshot.thinIce.broken.length - 1; i >= 0; i -= 1) {
+          const entry = snapshot.thinIce.broken[i];
+          const x = entry[0] * tileSize;
+          const y = entry[1] * tileSize;
+          ctx.fillRect(
+            toMapX(x),
+            toMapY(y),
+            (tileSize / worldWidth) * mapWidth,
+            (tileSize / worldHeight) * mapHeight
+          );
+        }
       }
 
       if (snapshot.hill && snapshot.hill.radius) {
