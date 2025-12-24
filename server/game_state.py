@@ -67,6 +67,9 @@ class PlayerState:
     has_light: bool = False
     score_accum: float = 0.0
     rings_left: int = 3
+    crowns: int = 0
+    items: set = field(default_factory=set)
+    account_id: str = ""
     ai_next_action_ts: float = 0.0
     ai_next_decision_ts: float = 0.0
     ai_target_x: float = 0.0
@@ -291,6 +294,8 @@ class GameState:
                     "team": player.team,
                     "alive": player.alive,
                     "ringsLeft": player.rings_left,
+                    "crowns": player.crowns,
+                    "items": list(player.items),
                     "isBot": player.is_bot,
                     "dashReadyAt": player.dash_ready_ts,
                 }

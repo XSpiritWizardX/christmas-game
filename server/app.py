@@ -4,14 +4,91 @@ import random
 import threading
 import time
 
-from flask import Flask, request
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 from game_state import GameState
+from store import (
+    add_account_name,
+    add_crowns,
+    auth_account,
+    buy_item,
+    create_account,
+    create_session,
+    delete_session,
+    get_account,
+    account_from_token,
+    init_db,
+)
 
 app = Flask(__name__)
+CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 state = GameState()
+init_db()
+
+STORE_ITEMS = [
+    {"id": "skin_ice", "label": "Ice Drift Skin", "cost": 3, "type": "skin"},
+    {"id": "boost_speed", "label": "Speed Boost", "cost": 6, "type": "boost"},
+]
+
+
+@app.post("/signup")
+def signup():
+    payload = request.get_json(silent=True) or {}
+    first = (payload.get("firstName") or "").strip()
+    last = (payload.get("lastName") or "").strip()
+    email = (payload.get("email") or "").strip().lower()
+    password = payload.get("password") or ""
+    if not first or not last or not email or len(password) < 6:
+        return jsonify({"error": "Invalid signup data"}), 400
+    try:
+        account_id = create_account(first, last, email, password)
+    except Exception:
+        return jsonify({"error": "Account already exists"}), 400
+    token = create_session(account_id)
+    return jsonify({"token": token})
+
+
+@app.post("/login")
+def login():
+    payload = request.get_json(silent=True) or {}
+    email = (payload.get("email") or "").strip().lower()
+    password = payload.get("password") or ""
+    account_id = auth_account(email, password)
+    if not account_id:
+        return jsonify({"error": "Invalid credentials"}), 401
+    token = create_session(account_id)
+    return jsonify({"token": token})
+
+
+@app.post("/logout")
+def logout():
+    auth_header = request.headers.get("Authorization", "")
+    token = ""
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        payload = request.get_json(silent=True) or {}
+        token = (payload.get("token") or "").strip()
+    if not token:
+        return jsonify({"error": "Missing token"}), 400
+    account_id = account_from_token(token)
+    if not account_id:
+        return jsonify({"error": "Invalid token"}), 401
+    delete_session(token)
+    return jsonify({"ok": True})
+
+
+@app.get("/me")
+def me():
+    token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    account_id = account_from_token(token)
+    if not account_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    crowns, items, names = get_account(account_id)
+    return jsonify({"crowns": crowns, "items": list(items), "names": names})
 
 ROUND_SEQUENCE = ["snowball", "survival", "hunt", "thin_ice", "hill", "light", "ice"]
 ROUND_DURATIONS = {
@@ -88,6 +165,7 @@ THIN_ICE_SYNC_TICKS = 8
 THIN_ICE_POINTS_PER_SECOND = 2
 THIN_ICE_DASH_DISTANCE = 160.0
 THIN_ICE_DASH_COOLDOWN = 4.0
+CROWNS_PER_WIN = 3
 TRAIL_SPLASH_COOLDOWN = 5.0
 TRAIL_SPLASH_RADIUS = 6
 TRAIL_TILE_SIZE = 16.0
@@ -174,12 +252,22 @@ def _safe_name(raw_name):
     return name[:16]
 
 
+def _apply_store_profile(player, account_id):
+    crowns, items, _names = get_account(account_id)
+    player.crowns = crowns
+    player.items = set(items)
+    player.account_id = account_id
+
+
 def _is_holly_player(player):
     return (player.name or "").strip().lower() == "holly"
 
 
 def _player_speed_multiplier(player):
-    return HOLLY_SPEED_MULTIPLIER if _is_holly_player(player) else 1.0
+    speed = HOLLY_SPEED_MULTIPLIER if _is_holly_player(player) else 1.0
+    if "boost_speed" in getattr(player, "items", set()):
+        speed *= 1.08
+    return speed
 
 
 def _hill_respawn_position(room):
@@ -244,6 +332,8 @@ def _world_payload(room):
                 "score": player.score,
                 "roundScore": player.round_score,
                 "ringsLeft": player.rings_left,
+                "crowns": player.crowns,
+                "items": list(player.items),
                 "isBot": player.is_bot,
                 "dashReadyAt": player.dash_ready_ts,
             }
@@ -1241,7 +1331,8 @@ def _setup_round(room, round_type):
         player.score_accum = 0.0
         player.energy = 0.0
         if round_type == "snowball":
-            player.rings_left = 4 if _is_holly_player(player) else 3
+            base_rings = 4 if _is_holly_player(player) else 3
+            player.rings_left = base_rings
         else:
             player.rings_left = 0
         player.input_x = 0.0
@@ -2579,7 +2670,7 @@ def _update_bonus(room, dt):
 
 
 def _world_loop():
-    tick_rate = 1.0 / 30.0
+    tick_rate = 1.0 / 60.0
     while True:
         socketio.sleep(tick_rate)
         rooms = state.list_rooms()
@@ -2670,6 +2761,12 @@ def _finish_round(room):
         finished = True
     else:
         room.status = "between_rounds"
+    if finished and room.players:
+        max_score = max(player.score for player in room.players.values())
+        winners = [player for player in room.players.values() if player.score == max_score]
+        for winner in winners:
+            if winner.account_id:
+                winner.crowns = add_crowns(winner.account_id, CROWNS_PER_WIN)
     payload = _room_payload(room)
     return finished, payload
 
@@ -2708,7 +2805,14 @@ def handle_create_room(data):
     payload = data or {}
     name = _safe_name(payload.get("name"))
     color = (payload.get("color") or "").strip().lower()
+    token = (payload.get("token") or "").strip()
     room = state.create_room(name, request.sid, color)
+    player = room.players.get(request.sid)
+    if player and token:
+        account_id = account_from_token(token)
+        if account_id:
+            _apply_store_profile(player, account_id)
+            add_account_name(account_id, player.name)
     join_room(room.code)
     emit("room_joined", {"room": state.serialize_room(room), "youId": request.sid})
     socketio.emit("room_update", _room_payload(room), to=room.code)
@@ -2721,6 +2825,7 @@ def handle_join_room(data):
     code = (payload.get("room") or "").strip().upper()
     name = _safe_name(payload.get("name"))
     color = (payload.get("color") or "").strip().lower()
+    token = (payload.get("token") or "").strip()
     if not code:
         emit("server_error", {"message": "Room code required"})
         return
@@ -2728,6 +2833,12 @@ def handle_join_room(data):
     if error:
         emit("server_error", {"message": error})
         return
+    player = room.players.get(request.sid)
+    if player and token:
+        account_id = account_from_token(token)
+        if account_id:
+            _apply_store_profile(player, account_id)
+            add_account_name(account_id, player.name)
     join_room(code)
     emit("room_joined", {"room": state.serialize_room(room), "youId": request.sid})
     socketio.emit("room_update", _room_payload(room), to=code)
@@ -2763,6 +2874,52 @@ def handle_set_color(data):
         return
     if room:
         socketio.emit("room_update", _room_payload(room), to=room.code)
+
+
+def _store_payload(account_id):
+    crowns, items, _names = get_account(account_id)
+    return {"items": STORE_ITEMS, "owned": list(items), "crowns": crowns}
+
+
+@socketio.on("get_store")
+def handle_get_store(data):
+    payload = data or {}
+    token = (payload.get("token") or "").strip()
+    account_id = account_from_token(token)
+    if not account_id:
+        emit("store_error", {"message": "Not logged in"})
+        return
+    emit("store_data", _store_payload(account_id))
+
+
+@socketio.on("buy_item")
+def handle_buy_item(data):
+    payload = data or {}
+    token = (payload.get("token") or "").strip()
+    item_id = (payload.get("itemId") or "").strip()
+    account_id = account_from_token(token)
+    if not account_id:
+        emit("store_error", {"message": "Not logged in"})
+        return
+    item = next((entry for entry in STORE_ITEMS if entry["id"] == item_id), None)
+    if not item:
+        emit("store_error", {"message": "Item not found"})
+        return
+    crowns, items, _names = get_account(account_id)
+    if item_id in items:
+        emit("store_error", {"message": "Already owned"})
+        return
+    success, new_crowns = buy_item(account_id, item_id, item["cost"])
+    if not success:
+        emit("store_error", {"message": "Not enough crowns"})
+        return
+    room = state.get_room_by_player(request.sid)
+    if room:
+        player = room.players.get(request.sid)
+        if player:
+            player.crowns = new_crowns
+            player.items.add(item_id)
+    emit("store_data", _store_payload(account_id))
 
 
 @socketio.on("add_ai")

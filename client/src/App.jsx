@@ -192,6 +192,20 @@ export default function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [needsTap, setNeedsTap] = useState(false);
   const [announcement, setAnnouncement] = useState(null);
+  const [storeOpen, setStoreOpen] = useState(false);
+  const [storeData, setStoreData] = useState(null);
+  const [storeError, setStoreError] = useState("");
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem("authToken") || "");
+  const [authError, setAuthError] = useState("");
+  const [authForm, setAuthForm] = useState({
+    firstName: "",
+    lastName: "",
+    email: "",
+    password: "",
+    confirmPassword: ""
+  });
+  const [authMode, setAuthMode] = useState("login");
   const isHollyName =
     (room?.players?.find((player) => player.id === youId)?.name ?? name)
       .trim()
@@ -303,6 +317,13 @@ export default function App() {
       if (!message) return;
       setAnnouncement({ message, duration: payload?.duration || 3 });
     });
+    socket.on("store_data", (payload) => {
+      setStoreData(payload || null);
+      setStoreError("");
+    });
+    socket.on("store_error", (payload) => {
+      setStoreError(payload?.message || "Store error");
+    });
 
     return () => socket.disconnect();
   }, []);
@@ -322,11 +343,16 @@ export default function App() {
   }, [room?.roundEndsAt]);
 
   useEffect(() => {
+    if (!authToken) return;
+    localStorage.setItem("authToken", authToken);
+  }, [authToken]);
+
+  useEffect(() => {
     if (!room) return undefined;
     const id = setInterval(() => {
       const current = inputRef.current;
       emit("player_input", { x: current.x, y: current.y });
-    }, 33);
+    }, 16);
     return () => clearInterval(id);
   }, [room?.code]);
 
@@ -430,6 +456,11 @@ export default function App() {
     return () => clearTimeout(id);
   }, [announcement]);
 
+  useEffect(() => {
+    if (!storeOpen) return;
+    emit("get_store", { token: authToken });
+  }, [storeOpen, authToken]);
+
   const sortedPlayers = useMemo(() => {
     if (!room?.players) return [];
     return [...room.players].sort((a, b) => {
@@ -458,6 +489,7 @@ export default function App() {
     setAnnouncement(null);
     setMenuOpen(false);
     setLeaderboardOpen(false);
+    setStoreOpen(false);
     inputRef.current = { x: 0, y: 0 };
   };
 
@@ -468,13 +500,110 @@ export default function App() {
 
   const handleCreate = () => {
     setError("");
-    emit("create_room", { name, color: colorId });
+    emit("create_room", { name, color: colorId, token: authToken });
   };
 
   const handleJoin = () => {
     const code = normalizeCode(roomCode);
     setError("");
-    emit("join_room", { name, room: code, color: colorId });
+    emit("join_room", { name, room: code, color: colorId, token: authToken });
+  };
+
+  const handleBuyItem = (itemId) => {
+    setStoreError("");
+    emit("buy_item", { token: authToken, itemId });
+  };
+
+  const handleAuthChange = (field, value) => {
+    setAuthForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const validateEmail = (value) => /\S+@\S+\.\S+/.test(value);
+
+  const handleSignup = async () => {
+    setAuthError("");
+    if (!authForm.firstName.trim() || !authForm.lastName.trim()) {
+      setAuthError("First and last name are required.");
+      return;
+    }
+    if (!validateEmail(authForm.email)) {
+      setAuthError("Enter a valid email.");
+      return;
+    }
+    if (authForm.password.length < 6) {
+      setAuthError("Password must be at least 6 characters.");
+      return;
+    }
+    if (authForm.password !== authForm.confirmPassword) {
+      setAuthError("Passwords do not match.");
+      return;
+    }
+    try {
+      const response = await fetch(`${SERVER_URL}/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(authForm)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setAuthError(data?.error || "Signup failed");
+        return;
+      }
+      setAuthToken(data.token || "");
+      setAuthOpen(false);
+      setAuthMode("login");
+    } catch (err) {
+      setAuthError("Signup failed");
+    }
+  };
+
+  const handleLogin = async () => {
+    setAuthError("");
+    if (!validateEmail(authForm.email)) {
+      setAuthError("Enter a valid email.");
+      return;
+    }
+    if (authForm.password.length < 6) {
+      setAuthError("Password must be at least 6 characters.");
+      return;
+    }
+    try {
+      const response = await fetch(`${SERVER_URL}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: authForm.email,
+          password: authForm.password
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setAuthError(data?.error || "Login failed");
+        return;
+      }
+      setAuthToken(data.token || "");
+      setAuthOpen(false);
+      setAuthMode("login");
+    } catch (err) {
+      setAuthError("Login failed");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch(`${SERVER_URL}/logout`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        }
+      });
+    } catch (err) {
+      // Ignore logout errors; still clear local auth.
+    }
+    localStorage.removeItem("authToken");
+    setAuthToken("");
+    setAuthOpen(false);
   };
 
   const handleReadyToggle = () => {
@@ -651,6 +780,14 @@ export default function App() {
                 </button>
                 <button className="secondary" onClick={handleJoin}>
                   Join room
+                </button>
+              </div>
+              <div className="button-row">
+                <button className="ghost" onClick={() => setAuthOpen(true)}>
+                  {authToken ? "Account" : "Login / Signup"}
+                </button>
+                <button className="ghost" onClick={() => setStoreOpen(true)}>
+                  Store
                 </button>
               </div>
 
@@ -946,6 +1083,142 @@ export default function App() {
             >
               {actionLabel}
             </button>
+          </div>
+        </div>
+      )}
+
+      {storeOpen && !room && (
+        <div className="menu-overlay" onClick={() => setStoreOpen(false)}>
+          <div className="menu-card" onClick={(event) => event.stopPropagation()}>
+            <div className="menu-header">
+              <div className="menu-title">Store</div>
+              <button
+                className="menu-close"
+                type="button"
+                onClick={() => setStoreOpen(false)}
+                aria-label="Close store"
+              >
+                ×
+              </button>
+            </div>
+            <div className="score-title">
+              Crowns: {storeData?.crowns ?? 0}
+            </div>
+            <div className="score-list">
+              {(storeData?.items || []).map((item) => {
+                const owned = storeData?.owned?.includes(item.id);
+                return (
+                  <div key={item.id} className="score-row">
+                    <span>{item.label}</span>
+                    <span>
+                      {owned ? "Owned" : `${item.cost} crowns`}
+                    </span>
+                    {!owned && (
+                      <button
+                        className="secondary"
+                        onClick={() => handleBuyItem(item.id)}
+                      >
+                        Buy
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {storeError && <div className="error">{storeError}</div>}
+          </div>
+        </div>
+      )}
+
+      {authOpen && !room && (
+        <div className="menu-overlay" onClick={() => setAuthOpen(false)}>
+          <div className="menu-card" onClick={(event) => event.stopPropagation()}>
+            <div className="menu-header">
+              <div className="menu-title">Account</div>
+              <button
+                className="menu-close"
+                type="button"
+                onClick={() => setAuthOpen(false)}
+                aria-label="Close account"
+              >
+                ×
+              </button>
+            </div>
+            {authMode === "signup" && (
+              <>
+                <label className="field">
+                  <span>First name</span>
+                  <input
+                    value={authForm.firstName}
+                    onChange={(event) => handleAuthChange("firstName", event.target.value)}
+                    placeholder="First"
+                  />
+                </label>
+                <label className="field">
+                  <span>Last name</span>
+                  <input
+                    value={authForm.lastName}
+                    onChange={(event) => handleAuthChange("lastName", event.target.value)}
+                    placeholder="Last"
+                  />
+                </label>
+              </>
+            )}
+            <label className="field">
+              <span>Email</span>
+              <input
+                value={authForm.email}
+                onChange={(event) => handleAuthChange("email", event.target.value)}
+                placeholder="you@email.com"
+              />
+            </label>
+            <label className="field">
+              <span>Password</span>
+              <input
+                type="password"
+                value={authForm.password}
+                onChange={(event) => handleAuthChange("password", event.target.value)}
+                placeholder="6+ characters"
+              />
+            </label>
+            {authMode === "signup" && (
+              <label className="field">
+                <span>Confirm password</span>
+                <input
+                  type="password"
+                  value={authForm.confirmPassword}
+                  onChange={(event) =>
+                    handleAuthChange("confirmPassword", event.target.value)
+                  }
+                  placeholder="Re-enter password"
+                />
+              </label>
+            )}
+            <div className="button-row">
+              <button
+                className="primary"
+                onClick={authMode === "signup" ? handleSignup : handleLogin}
+              >
+                {authMode === "signup" ? "Sign up" : "Log in"}
+              </button>
+              {authToken ? (
+                <button className="secondary" onClick={handleLogout}>
+                  Log out
+                </button>
+              ) : (
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    setAuthMode((prev) => (prev === "signup" ? "login" : "signup"))
+                  }
+                >
+                  {authMode === "signup"
+                    ? "Have an account? Log in"
+                    : "Need an account? Sign up"}
+                </button>
+              )}
+            </div>
+            {authError && <div className="error">{authError}</div>}
           </div>
         </div>
       )}
