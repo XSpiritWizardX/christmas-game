@@ -88,7 +88,6 @@ TRAIL_TILE_SIZE = 16.0
 TRAIL_TILE_POINTS = 1
 TRAIL_START_BUFFER = 2.0
 TRAIL_MAX_POINTS = 100000
-TRAIL_FULL_SYNC_TICKS = 30
 TREE_RADIUS = 22.0
 TREE_SIZES = {
     "small": {"draw": 32, "radius": 16},
@@ -195,17 +194,6 @@ def _room_payload(room):
 
 
 def _world_payload(room):
-    trails_full = False
-    trail_updates = []
-    trails = list(room.trails)
-    if room.round_type == "trails":
-        trails_full = room.tick % TRAIL_FULL_SYNC_TICKS == 0 or not room.trail_map
-        if trails_full:
-            trail_updates = []
-        else:
-            trails = []
-            trail_updates = list(room.trails_dirty)
-        room.trails_dirty = []
     players = []
     for player in room.players.values():
         players.append(
@@ -250,9 +238,7 @@ def _world_payload(room):
             "hazards": list(room.hazards),
             "gifts": list(room.gifts),
             "walls": list(room.walls),
-            "trails": trails,
-            "trailUpdates": trail_updates,
-            "trailsFull": trails_full,
+            "trails": list(room.trails),
             "light": dict(room.light) if room.light else {},
             "hill": dict(room.hill) if room.hill else {},
         },
@@ -694,31 +680,6 @@ def _spawn_snowball_dir(room, player, dx, dy):
     _spawn_snowball(room, player)
 
 
-def _splash_trail(room, player):
-    now = time.time()
-    if now < player.dash_ready_ts:
-        return
-    if room.round_elapsed < TRAIL_START_BUFFER:
-        return
-    player.dash_ready_ts = now + TRAIL_SPLASH_COOLDOWN
-    size = TRAIL_TILE_SIZE
-    cx = int(player.x // size)
-    cy = int(player.y // size)
-    radius = TRAIL_SPLASH_RADIUS
-    points = 0
-    for dy in range(-radius, radius + 1):
-        for dx in range(-radius, radius + 1):
-            if dx * dx + dy * dy > radius * radius:
-                continue
-            tx = cx + dx
-            ty = cy + dy
-            if _set_trail_tile(room, player, tx, ty):
-                points += TRAIL_TILE_POINTS
-    if points:
-        player.score += points
-        player.round_score += points
-
-
 def _perform_action(room, player):
     if room.status in {"lobby", "between_rounds"}:
         _spawn_snowball(room, player)
@@ -764,8 +725,6 @@ def _perform_action(room, player):
                 light["y"] = target.y
         else:
             _spawn_snowball(room, player)
-    elif room.round_type == "trails":
-        _splash_trail(room, player)
     elif room.round_type == "maze":
         _spawn_snowball(room, player)
 
@@ -1168,7 +1127,6 @@ def _setup_round(room, round_type):
     room.hill = {}
     room.trails = []
     room.trail_map = {}
-    room.trails_dirty = []
     room.hazard_accum = 0.0
     room.gift_accum = 0.0
     room.hill_snow_accum = 0.0
@@ -1361,79 +1319,15 @@ def _add_trail_tile(room, player, tx, ty):
     }
     room.trail_map[key] = tile
     room.trails.append(tile)
-    room.trails_dirty.append(
-        {
-            "x": tile["x"],
-            "y": tile["y"],
-            "size": tile["size"],
-            "color": tile["color"],
-            "owner": tile["owner"],
-        }
-    )
     if len(room.trails) > TRAIL_MAX_POINTS:
         room.trails = room.trails[-TRAIL_MAX_POINTS:]
         room.trail_map = {(int(t["x"] // size), int(t["y"] // size)): t for t in room.trails}
     return True
 
 
-def _set_trail_tile(room, player, tx, ty):
-    size = TRAIL_TILE_SIZE
-    key = (tx, ty)
-    existing = room.trail_map.get(key)
-    if existing:
-        if existing["owner"] == player.sid:
-            return False
-        existing["color"] = player.color
-        existing["owner"] = player.sid
-        room.trails_dirty.append(
-            {
-                "x": existing["x"],
-                "y": existing["y"],
-                "size": existing["size"],
-                "color": existing["color"],
-                "owner": existing["owner"],
-            }
-        )
-        return True
-    return _add_trail_tile(room, player, tx, ty)
-
-
 def _trail_coords(player):
     size = TRAIL_TILE_SIZE
     return int(player.x // size), int(player.y // size)
-
-
-def _add_trail_path(room, player, start_x, start_y, end_x, end_y):
-    size = TRAIL_TILE_SIZE
-    sx = int(start_x // size)
-    sy = int(start_y // size)
-    ex = int(end_x // size)
-    ey = int(end_y // size)
-    dx = abs(ex - sx)
-    dy = abs(ey - sy)
-    step_x = 1 if sx < ex else -1
-    step_y = 1 if sy < ey else -1
-    err = dx - dy
-    tx = sx
-    ty = sy
-    points = 0
-    while True:
-        if _set_trail_tile(room, player, tx, ty):
-            points += TRAIL_TILE_POINTS
-        if tx == ex and ty == ey:
-            break
-        e2 = err * 2
-        if e2 > -dy:
-            err -= dy
-            tx += step_x
-        if e2 < dx:
-            err += dx
-            ty += step_y
-    if points:
-        player.score += points
-        player.round_score += points
-    return ex, ey, points > 0
-
 
 def _trail_region(room, start_x, start_y, grid_w, grid_h, visited):
     region = []
@@ -1500,12 +1394,12 @@ def _update_trails(room, dt):
     for player in room.players.values():
         if not player.alive:
             continue
-        prev_x = player.x
-        prev_y = player.y
         _move_with_walls(room, player, dt, PLAYER_SPEED)
         if room.round_elapsed >= TRAIL_START_BUFFER:
-            tx, ty, added = _add_trail_path(room, player, prev_x, prev_y, player.x, player.y)
-            if added:
+            tx, ty = _trail_coords(player)
+            if _add_trail_tile(room, player, tx, ty):
+                player.score += TRAIL_TILE_POINTS
+                player.round_score += TRAIL_TILE_POINTS
                 _fill_trail_loops(room, player, tx, ty)
 
     if room.round_elapsed < TRAIL_START_BUFFER or not room.trail_map:

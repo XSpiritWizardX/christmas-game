@@ -162,7 +162,6 @@ export default function App() {
   const inputRef = useRef({ x: 0, y: 0 });
   const audioRef = useRef(null);
   const currentTrackRef = useRef("");
-  const trailIndexRef = useRef(new Map());
   const sfxRef = useRef({
     whoosh: { pool: [], index: 0 },
     collect: { pool: [], index: 0 }
@@ -207,40 +206,7 @@ export default function App() {
       setWorld((prev) => mergeWorldWithRoom(prev, payload.room));
     });
     socket.on("world_state", (payload) => {
-      setWorld((prev) => {
-        const nextWorld = payload.world;
-        if (!nextWorld) return prev;
-        const trailsFull = Boolean(nextWorld.trailsFull);
-        const updates = nextWorld.trailUpdates || [];
-        if (!trailsFull && updates.length === 0) {
-          return nextWorld;
-        }
-        const trailIndex = trailIndexRef.current;
-        let mergedTrails = trailsFull ? [] : [...(prev?.trails || [])];
-        if (trailsFull) {
-          trailIndex.clear();
-          mergedTrails = Array.isArray(nextWorld.trails) ? [...nextWorld.trails] : [];
-          mergedTrails.forEach((trail, idx) => {
-            trailIndex.set(`${trail.x}|${trail.y}`, idx);
-          });
-        }
-        if (updates.length) {
-          updates.forEach((trail) => {
-            const key = `${trail.x}|${trail.y}`;
-            const existingIndex = trailIndex.get(key);
-            if (existingIndex !== undefined) {
-              mergedTrails[existingIndex] = trail;
-            } else {
-              trailIndex.set(key, mergedTrails.length);
-              mergedTrails.push(trail);
-            }
-          });
-        }
-        return {
-          ...nextWorld,
-          trails: mergedTrails,
-        };
-      });
+      setWorld(payload.world);
       setRoom((prev) => {
         if (!payload.room) return prev;
         return { ...payload.room, players: payload.world.players };
@@ -529,14 +495,12 @@ export default function App() {
       return "Throw";
     if (room.roundType === "hunt" || room.roundType === "hill")
       return "Throw";
-    if (room.roundType === "trails") return "Splash";
+    if (room.roundType === "trails") return "Trail";
     if (room.roundType === "bonus") return "Tap!";
     return "Action";
   })();
 
-  const splashReadyAt = you?.dashReadyAt ?? 0;
-  const splashReady = Date.now() / 1000 >= splashReadyAt;
-  const actionDisabled = room?.roundType === "trails" ? !splashReady : false;
+  const actionDisabled = room?.roundType === "trails";
 
   useEffect(() => {
     const gifts = world?.gifts || [];
