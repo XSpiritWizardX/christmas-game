@@ -620,6 +620,38 @@ button {
   gap: 10px;
 }
 
+.volume-controls {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(240, 234, 228, 0.6);
+  border: 1px solid rgba(60, 40, 30, 0.1);
+}
+
+.slider-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 52px;
+  align-items: center;
+  gap: 10px;
+}
+
+.slider-label {
+  font-weight: 600;
+}
+
+.slider-row input[type="range"] {
+  width: 100%;
+  accent-color: #d62828;
+}
+
+.slider-value {
+  text-align: right;
+  font-weight: 600;
+  color: #5b3d2b;
+  font-variant-numeric: tabular-nums;
+}
+
 .toast {
   position: absolute;
   left: 50%;

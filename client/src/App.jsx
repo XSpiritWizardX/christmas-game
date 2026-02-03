@@ -50,7 +50,8 @@ const SFX_TRACKS = {
   whoosh: "/assets/audio/whoosh.wav",
   collect: "/assets/audio/collect.wav"
 };
-const SFX_VOLUME = 0.4;
+const DEFAULT_MUSIC_VOLUME = 0.5;
+const DEFAULT_SFX_VOLUME = 0.4;
 
 const roundName = (roundType) => {
   switch (roundType) {
@@ -132,6 +133,8 @@ const formatTime = (seconds) => {
   return String(seconds);
 };
 
+const clamp01 = (value) => Math.min(1, Math.max(0, value));
+
 const normalizeCode = (value) => value.replace(/\s+/g, "").toUpperCase();
 
 const roomToWorld = (room) => {
@@ -189,7 +192,15 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(() => localStorage.getItem("musicMuted") === "true");
+  const [musicVolume, setMusicVolume] = useState(() => {
+    const stored = Number(localStorage.getItem("musicVolume"));
+    return Number.isFinite(stored) ? clamp01(stored) : DEFAULT_MUSIC_VOLUME;
+  });
+  const [sfxVolume, setSfxVolume] = useState(() => {
+    const stored = Number(localStorage.getItem("sfxVolume"));
+    return Number.isFinite(stored) ? clamp01(stored) : DEFAULT_SFX_VOLUME;
+  });
   const [needsTap, setNeedsTap] = useState(false);
   const [announcement, setAnnouncement] = useState(null);
   const [storeOpen, setStoreOpen] = useState(false);
@@ -348,6 +359,18 @@ export default function App() {
   }, [authToken]);
 
   useEffect(() => {
+    localStorage.setItem("musicMuted", String(isMuted));
+  }, [isMuted]);
+
+  useEffect(() => {
+    localStorage.setItem("musicVolume", String(musicVolume));
+  }, [musicVolume]);
+
+  useEffect(() => {
+    localStorage.setItem("sfxVolume", String(sfxVolume));
+  }, [sfxVolume]);
+
+  useEffect(() => {
     if (!room) return undefined;
     const id = setInterval(() => {
       const current = inputRef.current;
@@ -372,20 +395,20 @@ export default function App() {
       audio.load();
     }
     audio.loop = true;
-    audio.volume = 0.5;
+    audio.volume = musicVolume;
     audio.muted = isMuted;
     const playPromise = audio.play();
     if (playPromise && typeof playPromise.catch === "function") {
       playPromise.catch(() => setNeedsTap(true));
     }
-  }, [trackSrc, isMuted]);
+  }, [trackSrc, isMuted, musicVolume]);
 
   useEffect(() => {
     const makePool = (src, size = 4) =>
       Array.from({ length: size }, () => {
         const audio = new Audio(src);
         audio.preload = "auto";
-        audio.volume = SFX_VOLUME;
+        audio.volume = sfxVolume;
         return audio;
       });
     const whooshPool = makePool(SFX_TRACKS.whoosh, 4);
@@ -406,11 +429,11 @@ export default function App() {
     Object.values(sfxRef.current).forEach((entry) => {
       if (!entry.pool) return;
       entry.pool.forEach((audio) => {
-        audio.muted = isMuted;
-        audio.volume = SFX_VOLUME;
+        audio.muted = false;
+        audio.volume = sfxVolume;
       });
     });
-  }, [isMuted]);
+  }, [sfxVolume]);
 
   useEffect(() => {
     if (!needsTap) return;
@@ -618,15 +641,29 @@ export default function App() {
     setIsMuted((prev) => !prev);
   };
 
+  const handleMusicVolumeChange = (event) => {
+    const next = clamp01(Number(event.target.value) / 100);
+    setMusicVolume(next);
+    if (next > 0 && isMuted) {
+      setIsMuted(false);
+    }
+  };
+
+  const handleSfxVolumeChange = (event) => {
+    const next = clamp01(Number(event.target.value) / 100);
+    setSfxVolume(next);
+  };
+
   const playSfx = (name) => {
     const entry = sfxRef.current[name];
     if (!entry || !entry.pool || entry.pool.length === 0) return;
+    if (sfxVolume <= 0) return;
     const index = entry.index % entry.pool.length;
     entry.index += 1;
     const audio = entry.pool[index];
     audio.currentTime = 0;
-    audio.muted = isMuted;
-    audio.volume = SFX_VOLUME;
+    audio.muted = false;
+    audio.volume = sfxVolume;
     audio.play().catch(() => {});
   };
   const playWhoosh = () => playSfx("whoosh");
@@ -722,6 +759,42 @@ export default function App() {
   const actionDisabled = ["trails", "thin_ice"].includes(room?.roundType)
     ? !dashReady
     : false;
+  const musicPercent = Math.round(musicVolume * 100);
+  const sfxPercent = Math.round(sfxVolume * 100);
+  const volumeControls = (
+    <div className="volume-controls">
+      <div className="slider-row">
+        <label className="slider-label" htmlFor="music-volume">
+          Music
+        </label>
+        <input
+          id="music-volume"
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          value={musicPercent}
+          onChange={handleMusicVolumeChange}
+        />
+        <span className="slider-value">{musicPercent}%</span>
+      </div>
+      <div className="slider-row">
+        <label className="slider-label" htmlFor="sfx-volume">
+          SFX
+        </label>
+        <input
+          id="sfx-volume"
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          value={sfxPercent}
+          onChange={handleSfxVolumeChange}
+        />
+        <span className="slider-value">{sfxPercent}%</span>
+      </div>
+    </div>
+  );
 
   useEffect(() => {
     const gifts = world?.gifts || [];
@@ -895,6 +968,7 @@ export default function App() {
                         Leave
                       </button>
                     </div>
+                    {volumeControls}
 
                     <div className="color-section compact">
                       <div className="section-title">Pick your color</div>
@@ -1026,6 +1100,7 @@ export default function App() {
                     Leave game
                   </button>
                 </div>
+                {volumeControls}
               </div>
             </div>
           )}
