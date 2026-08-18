@@ -1,17 +1,64 @@
-# Christmas Multiplayer Prototype
+# Christmas Multiplayer Game
 
-This is a mobile-first, real-time prototype using Flask-SocketIO and React.
+A mobile-first real-time Christmas multiplayer game using React/Vite, Flask-SocketIO, and PostgreSQL/SQLite persistence.
 
-## Features
-- Real-time rooms (up to 16 players)
-- Lobby movement with virtual joystick + snowball throw
-- 5 rounds scaffolded (survival, snowball fight, maze, carry light, bonus tap)
-- Live leaderboard + host-controlled rounds
+## Production architecture
 
-## Local setup
+Production runs as **one Docker web service**:
+
+- Vite builds the React client during the Docker build.
+- Flask serves the compiled React assets and the existing HTTP API.
+- Flask-SocketIO handles the real-time game connection on the same origin.
+- Gunicorn + Eventlet run the production web process.
+- `DATABASE_URL` enables PostgreSQL persistence using the existing `xmas` schema.
+- If `DATABASE_URL` is not set, the server falls back to SQLite for local/dev use.
+
+No separate Render Static Site is required.
+
+## Docker
+
+Build:
+
+```bash
+docker build -t xmas-eve-game .
+```
+
+Run with SQLite fallback:
+
+```bash
+docker run --rm -p 10000:10000 -e PORT=10000 xmas-eve-game
+```
+
+Run with PostgreSQL:
+
+```bash
+docker run --rm -p 10000:10000 \
+  -e PORT=10000 \
+  -e DATABASE_URL="postgresql://..." \
+  xmas-eve-game
+```
+
+Open `http://localhost:10000`.
+
+## Render
+
+The repository contains `render.yaml` configured for a single Docker web service named `xmas-eve-game`.
+
+Required production environment variable:
+
+- `DATABASE_URL` - PostgreSQL connection string. The app creates/uses the `xmas` schema automatically.
+
+Render supplies `PORT` automatically.
+
+Health check:
+
+- `/health`
+
+## Local development
 
 ### Server
-```
+
+```bash
 cd server
 python -m venv .venv
 . .venv/bin/activate
@@ -20,18 +67,11 @@ python app.py
 ```
 
 ### Client
-```
+
+```bash
 cd client
 npm install
 npm run dev
 ```
 
-Open http://localhost:5173 on your phone or desktop browser.
-
-## Config
-- Set `VITE_SERVER_URL` if your server runs on a different host or port.
-
-## Next steps
-- Replace UI copy, colors, and add your Christmas assets
-- Tune round durations, maps, and scoring
-- Add sound effects and music once assets are ready
+Local Vite development continues to use `http://localhost:5000` unless `VITE_SERVER_URL` is set. Production builds use the web service's own origin automatically.
