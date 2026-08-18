@@ -1,6 +1,26 @@
 # Christmas Multiplayer Game
 
-A mobile-first real-time Christmas multiplayer game using React/Vite, Flask-SocketIO, and PostgreSQL/SQLite persistence.
+A mobile-first real-time Christmas party game using React/Vite, Flask-SocketIO, and PostgreSQL/SQLite persistence.
+
+## Current game upgrades
+
+The production build now includes a dedicated party-game polish and reliability layer:
+
+- 15-second reconnect grace period that preserves player position, score, host status, inventory, and active-round state.
+- Automatic rejoin after a short connection drop or browser refresh.
+- Disconnected players stop moving immediately while their slot is held.
+- 3-2-1-GO synchronized round starts.
+- Shorter, faster-paced rounds for better party-game pacing.
+- Server-authoritative 60 Hz simulation with world-state broadcasts reduced to roughly 30 Hz to lower multiplayer bandwidth.
+- Client input deduplication/throttling to avoid redundant Socket.IO traffic.
+- Christmas AI personalities including Krampus, Rudolph, Frosty, Ginger, Jingles, Tinsel, Coal, and Noel.
+- AI personality differences in movement and action cadence.
+- Score popups, elimination feedback, screen shake, haptics on supported phones, round-result overlays, confetti, and ambient snowfall.
+- Reduced-motion support for players who disable motion effects at the OS/browser level.
+- Crown progression is cosmetic-only; store purchases no longer create competitive movement advantages.
+- Holiday cosmetics include Ice Drift Skin, Sleigh Bell Aura, Candy Cane Trail, Elf Hat Badge, and Victory Sparkles.
+- Server-side player-name normalization for safe result/announcement presentation.
+- GitHub Actions verification for the production Vite build and Python source compilation.
 
 ## Production architecture
 
