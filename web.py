@@ -19,14 +19,24 @@ app = game_server.app
 socketio = game_server.socketio
 state = game_server.state
 
+# Player names also appear in lightweight non-React overlays. Normalize them
+# to plain text server-side so a room name can never become injected markup.
+def _safe_party_name(raw_name):
+    name = str(raw_name or "").strip()
+    if not name:
+        return "Player"
+    clean = "".join(ch for ch in name if ch not in "<>&\"'").strip()
+    return (clean or "Player")[:16]
+
+
+game_server._safe_name = _safe_party_name
+
 # ---------------------------------------------------------------------------
 # Party-game production upgrades
 # ---------------------------------------------------------------------------
 
 RECONNECT_GRACE_SECONDS = 15
 
-# Faster, punchier rounds. The game loop stays server-authoritative; only the
-# presentation length changes.
 game_server.ROUND_DURATIONS.update(
     {
         "survival": 55,
@@ -41,8 +51,6 @@ game_server.ROUND_DURATIONS.update(
     }
 )
 
-# Keep progression cosmetic. Existing boost_speed purchases remain owned, but
-# are presented as a cosmetic aura and no longer increase movement speed.
 game_server.STORE_ITEMS = [
     {"id": "skin_ice", "label": "Ice Drift Skin", "cost": 3, "type": "skin"},
     {"id": "boost_speed", "label": "Sleigh Bell Aura", "cost": 6, "type": "cosmetic"},
@@ -53,14 +61,11 @@ game_server.STORE_ITEMS = [
 
 
 def _fair_player_speed_multiplier(player):
-    # Preserve the game's Holly easter egg, but remove store-bought speed
-    # advantages so crowns never become pay-to-win power.
     return game_server.HOLLY_SPEED_MULTIPLIER if game_server._is_holly_player(player) else 1.0
 
 
 game_server._player_speed_multiplier = _fair_player_speed_multiplier
 
-# Give AI opponents memorable Christmas identities and subtle personalities.
 AI_PROFILES = [
     ("Krampus", 1.00, 0.72),
     ("Rudolph", 1.12, 0.92),
@@ -116,10 +121,6 @@ def _personality_ai_ready_action(player, now, cooldown):
 state.add_bot = _themed_add_bot
 game_server._set_bot_input = _personality_bot_input
 game_server._ai_ready_action = _personality_ai_ready_action
-
-# ---------------------------------------------------------------------------
-# Reconnect / resume support
-# ---------------------------------------------------------------------------
 
 _resume_lock = threading.Lock()
 _resume_by_token = {}
@@ -238,8 +239,6 @@ def _expire_disconnected_player(token, sid, generation):
 
 
 def _remove_player_with_grace(sid):
-    # Explicit Leave should be immediate. Network disconnects get a grace
-    # period so a phone can switch Wi-Fi/cellular without losing the match.
     if _event_name() != "disconnect":
         _clear_resume_for_sid(sid)
         return _original_remove_player(sid)
@@ -252,6 +251,12 @@ def _remove_player_with_grace(sid):
         generation = _resume_generation[token]
 
     room = state.get_room_by_player(sid)
+    if room:
+        with room.lock:
+            player = room.players.get(sid)
+            if player:
+                player.input_x = 0.0
+                player.input_y = 0.0
     socketio.start_background_task(_expire_disconnected_player, token, sid, generation)
     return room
 
@@ -259,10 +264,6 @@ def _remove_player_with_grace(sid):
 state.create_room = _create_room_with_resume
 state.join_room = _join_room_with_resume
 state.remove_player = _remove_player_with_grace
-
-# ---------------------------------------------------------------------------
-# 3-2-1-GO round starts
-# ---------------------------------------------------------------------------
 
 
 @socketio.on("party_start_round")
@@ -328,9 +329,6 @@ def handle_party_start_round(_data=None):
     socketio.emit("round_started", payload, to=room_code)
     socketio.start_background_task(game_server._run_round_timer, room_code, round_number)
 
-# Cut world-state broadcast bandwidth roughly in half while preserving the
-# authoritative 60 Hz simulation. 30 Hz state updates still feel smooth in a
-# browser game and scale much better toward 16 players.
 _original_socketio_emit = socketio.emit
 _world_emit_count = {}
 
@@ -346,10 +344,6 @@ def _optimized_emit(event, *args, **kwargs):
 
 
 socketio.emit = _optimized_emit
-
-# ---------------------------------------------------------------------------
-# React SPA serving
-# ---------------------------------------------------------------------------
 
 
 @app.route("/", defaults={"path": ""})
