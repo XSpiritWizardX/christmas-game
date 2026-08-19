@@ -1,0 +1,40 @@
+name: Feature request
+description: Propose a scoped multiplayer, gameplay, polish, or developer-experience improvement
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What player or engineering problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed scope
+      description: Describe the smallest useful implementation and important non-goals.
+    validations:
+      required: true
+  - type: textarea
+    id: multiplayer
+    attributes:
+      label: Multiplayer considerations
+      description: Note authority, reconnect, bandwidth, fairness, capacity, or persistence impact where relevant.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Include automated tests, build/deployment checks, and gameplay evidence where relevant.
+    validations:
+      required: true
+  - type: dropdown
+    id: release
+    attributes:
+      label: Expected release impact
+      options:
+        - Patch
+        - Minor feature
+        - Breaking / major
+        - No release impact

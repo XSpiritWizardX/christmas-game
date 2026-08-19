@@ -1,0 +1,29 @@
+name: Bug report
+description: Report a reproducible multiplayer, gameplay, client, persistence, or deployment defect
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Include room state, player count, round type, browser/device, and reconnect conditions when relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Add logs, screenshots/video, Socket.IO behavior, console output, or a failing test.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What observable behavior and automated coverage are required before closing?
