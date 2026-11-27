@@ -10,6 +10,8 @@ const isTypingTarget = (target) => {
 };
 
 export default function Joystick({ onMove, onAction }) {
+  const callbacks = useRef({onMove,onAction});
+  callbacks.current = {onMove,onAction};
   const baseRef = useRef(null);
   const pointerIdRef = useRef(null);
   const keysRef = useRef({ w: false, a: false, s: false, d: false });
@@ -33,7 +35,7 @@ export default function Joystick({ onMove, onAction }) {
         dy /= mag;
       }
       setKnob({ x: dx * radius, y: dy * radius });
-      onMove?.(dx, dy);
+      callbacks.current.onMove?.(dx, dy);
     };
 
     const handlePointerDown = (event) => {
@@ -47,7 +49,7 @@ export default function Joystick({ onMove, onAction }) {
       if (pointerIdRef.current !== event.pointerId) return;
       pointerIdRef.current = null;
       setKnob({ x: 0, y: 0 });
-      onMove?.(0, 0);
+      callbacks.current.onMove?.(0, 0);
     };
 
     const handleMove = (event) => {
@@ -64,7 +66,7 @@ export default function Joystick({ onMove, onAction }) {
         dy = (dy / distance) * radius;
       }
       setKnob({ x: dx, y: dy });
-      onMove?.(dx / radius, dy / radius);
+      callbacks.current.onMove?.(dx / radius, dy / radius);
     };
 
     base.addEventListener("pointerdown", handlePointerDown);
@@ -77,7 +79,7 @@ export default function Joystick({ onMove, onAction }) {
       if (event.code === KEY_ACTION) {
         event.preventDefault();
         if (!event.repeat) {
-          onAction?.();
+          callbacks.current.onAction?.();
         }
         return;
       }
@@ -112,7 +114,7 @@ export default function Joystick({ onMove, onAction }) {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [onAction, onMove]);
+  }, []);
 
   return (
     <div ref={baseRef} className="joystick-base" aria-label="Movement joystick">

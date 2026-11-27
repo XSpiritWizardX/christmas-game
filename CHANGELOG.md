@@ -3,6 +3,8 @@
 Notable Snow Dash product and engineering changes are recorded here. Releases use semantic-version tags and GitHub generated release notes.
 
 ## Unreleased
+- Add ten Christmas festival rounds, eleven playable characters, host settings, original bell arrangements and persisted character selections.
+- Add Socket.IO integration, simulation, audio asset and desktop/mobile browser checks.
 
 ### Engineering
 - Add multiplayer room-state regression tests covering identity rules, room creation, color allocation, capacity, host transfer, and the serialized client contract.

@@ -45,3 +45,9 @@ The Dockerfile is multi-stage: Node 20 builds the Vite bundle, then a Python 3.1
 `tests/test_game_state.py` protects deterministic multiplayer rules that can be validated without a browser: room setup, identity/color allocation, maximum capacity, host transfer, and the serialized contract consumed by clients. GitHub Actions additionally installs production Python dependencies, compiles server sources, builds the React client, and builds the exact production Docker image.
 
 Future test layers can add Socket.IO integration coverage and browser-level end-to-end tests for create/join/reconnect/round flows without weakening the fast deterministic game-state suite.
+
+### Festival simulation and assets
+
+The existing room lock protects festival state. The server chooses spawns, hidden prizes, maze connectivity, team membership, damage, scores and completion. Guests send bounded movement vectors and action requests. Human and bot actions call the same handlers. Snapshots omit the hidden ornament locations. Characters only affect rendering. Registered selections use an additive character_preferences table in SQLite or Postgres.
+
+The eleven SVG sprite designs and procedural bell scores were authored for Snow Dash in this expansion. The synthesizer in client/src/festival.js supplies local PCM audio at runtime. The new assets use no third-party samples or compositions. The project grants permission to use, modify and distribute these new assets with Snow Dash.

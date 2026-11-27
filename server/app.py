@@ -8,6 +8,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
+import festival
+from store import character_preference
 from game_state import GameState
 from store import (
     add_account_name,
@@ -34,13 +36,20 @@ STORE_ITEMS = [
 ]
 
 
+def text_field(payload, key):
+    value = payload.get(key) if isinstance(payload,dict) else None
+    return value.strip() if isinstance(value,str) and len(value)<=4096 else ""
+
+
 @app.post("/signup")
 def signup():
     payload = request.get_json(silent=True) or {}
-    first = (payload.get("firstName") or "").strip()
-    last = (payload.get("lastName") or "").strip()
-    email = (payload.get("email") or "").strip().lower()
-    password = payload.get("password") or ""
+    first = text_field(payload,"firstName")
+    last = text_field(payload,"lastName")
+    email = text_field(payload,"email").lower()
+    password = payload.get("password") if isinstance(payload,dict) else None
+    if not isinstance(password,str) or len(password)>4096:
+        return jsonify({"error":"Invalid password"}),400
     if not first or not last or not email or len(password) < 6:
         return jsonify({"error": "Invalid signup data"}), 400
     try:
@@ -54,8 +63,10 @@ def signup():
 @app.post("/login")
 def login():
     payload = request.get_json(silent=True) or {}
-    email = (payload.get("email") or "").strip().lower()
-    password = payload.get("password") or ""
+    email = text_field(payload,"email").lower()
+    password = payload.get("password") if isinstance(payload,dict) else None
+    if not isinstance(password,str) or len(password)>4096:
+        return jsonify({"error":"Invalid password"}),400
     account_id = auth_account(email, password)
     if not account_id:
         return jsonify({"error": "Invalid credentials"}), 401
@@ -71,7 +82,7 @@ def logout():
         token = auth_header.split(" ", 1)[1].strip()
     if not token:
         payload = request.get_json(silent=True) or {}
-        token = (payload.get("token") or "").strip()
+        token = text_field(payload,"token")
     if not token:
         return jsonify({"error": "Missing token"}), 400
     account_id = account_from_token(token)
@@ -90,7 +101,7 @@ def me():
     crowns, items, names = get_account(account_id)
     return jsonify({"crowns": crowns, "items": list(items), "names": names})
 
-ROUND_SEQUENCE = ["snowball", "survival", "hunt", "thin_ice", "hill", "light", "ice"]
+ROUND_SEQUENCE = ["snowball", "survival", "hunt", "thin_ice", "hill", "light", "ice", *festival.MODES]
 ROUND_DURATIONS = {
     "survival": 65,
     "snowball": 120,
@@ -257,6 +268,7 @@ def _apply_store_profile(player, account_id):
     player.crowns = crowns
     player.items = set(items)
     player.account_id = account_id
+    player.character = character_preference(account_id)
 
 
 def _is_holly_player(player):
@@ -321,6 +333,12 @@ def _world_payload(room):
                 "id": player.sid,
                 "name": player.name,
                 "color": player.color,
+                "character": player.character,
+                "winner": player.winner,
+                "cargo": player.cargo,
+                "checkpoint": player.checkpoint,
+                "acting": room.round_elapsed - player.last_action_ts < .25 and player.last_action_ts > 0 if room.round_type in festival.MODES else False,
+                "hurt": 0 <= room.round_elapsed - player.last_hit_ts < .5 if room.round_type in festival.MODES else False,
                 "x": player.x,
                 "y": player.y,
                 "alive": player.alive,
@@ -348,8 +366,10 @@ def _world_payload(room):
             "maxRounds": room.max_rounds,
             "hostId": room.host_sid,
             "nextRoundType": _next_round_type(room),
+            "lastResult": room.last_result,
         },
         "world": {
+            "festival": festival.public(room) if room.round_type in festival.MODES else {},
             "width": room.width,
             "height": room.height,
             "players": players,
@@ -706,7 +726,8 @@ def _maybe_spawn_snowball_boss(room, now, dt):
         _spawn_snowball_boss(room, now)
 
 def _move_with_walls(room, player, dt, speed):
-    speed *= _player_speed_multiplier(player)
+    if room.round_type not in festival.MODES:
+        speed *= _player_speed_multiplier(player)
     dx = player.input_x
     dy = player.input_y
     new_x = player.x + dx * speed * dt
@@ -833,7 +854,9 @@ def _perform_action(room, player):
         return
     if room.status != "in_round":
         return
-    if room.round_type == "snowball":
+    if room.round_type in festival.MODES:
+        festival.action(room, player)
+    elif room.round_type == "snowball":
         _spawn_snowball(room, player)
     elif room.round_type in {"hunt", "hill"}:
         _spawn_snowball(room, player)
@@ -1387,6 +1410,8 @@ def _setup_round(room, round_type):
             "radius": HILL_RADIUS,
         }
 
+    if round_type in festival.MODES:
+        festival.prepare(room)
     if round_type == "hunt":
         _spawn_trees(room, HUNT_TREE_COUNT)
         _spawn_snowball_boss(room, time.time())
@@ -1474,6 +1499,12 @@ def _add_trail_tile(room, player, tx, ty):
         "y": ty * size,
         "size": size,
         "color": player.color,
+                "character": player.character,
+                "winner": player.winner,
+                "cargo": player.cargo,
+                "checkpoint": player.checkpoint,
+                "acting": room.round_elapsed - player.last_action_ts < .25 and player.last_action_ts > 0 if room.round_type in festival.MODES else False,
+                "hurt": 0 <= room.round_elapsed - player.last_hit_ts < .5 if room.round_type in festival.MODES else False,
         "owner": player.sid,
     }
     room.trail_map[key] = tile
@@ -2686,7 +2717,8 @@ def _world_loop():
                     dt = 0.2
                 room.last_update_ts = now
                 room.tick += 1
-                _update_ai(room, now)
+                if room.status != "in_round" or room.round_type not in festival.MODES:
+                    _update_ai(room, now)
 
                 if room.status in {"lobby", "between_rounds"}:
                     _update_lobby(room, dt)
@@ -2694,7 +2726,9 @@ def _world_loop():
                     _remove_projectiles_on_player_hit(room)
                 elif room.status == "in_round":
                     room.round_elapsed += dt
-                    if room.round_type == "survival":
+                    if room.round_type in festival.MODES:
+                        festival.step(room, dt, _move_with_walls)
+                    elif room.round_type == "survival":
                         _update_survival(room, dt)
                     elif room.round_type == "snowball":
                         _update_snowball(room, dt)
@@ -2714,17 +2748,20 @@ def _world_loop():
                         _update_hill(room, dt)
                     elif room.round_type == "bonus":
                         _update_bonus(room, dt)
-                    if room.players and not any(player.alive for player in room.players.values()):
+                    if room.round_type in festival.MODES and room.festival["completed"]:
+                        end_finished, end_payload = _finish_round(room)
+                    elif room.players and not any(player.alive for player in room.players.values()):
                         end_finished, end_payload = _finish_round(room)
                     elif room.round_type == "snowball":
                         alive_teams = {player.team for player in room.players.values() if player.alive}
                         if len(alive_teams) == 1:
                             end_finished, end_payload = _finish_round(room)
 
-                payload = _world_payload(room)
+                payload = _world_payload(room) if room.tick % 2 == 0 else None
                 announcements = list(room.announcements)
                 room.announcements = []
-            socketio.emit("world_state", payload, to=room.code)
+            if payload:
+                socketio.emit("world_state", payload, to=room.code)
             if announcements:
                 for announcement in announcements:
                     socketio.emit("announcement", announcement, to=room.code)
@@ -2748,6 +2785,18 @@ def _ensure_world_loop():
 
 def _finish_round(room):
     finished = False
+    room.last_result = ""
+    if room.round_type == "boss":
+        won = room.festival["hp"] <= 0
+        room.last_result = "Frost Ogre defeated!" if won else "The Frost Ogre held the North Pole."
+    elif room.round_type == "heist":
+        green, red = room.festival["stock"]
+        room.last_result = "Vaults tied" if green == red else ("Green" if green > red else "Red") + " vault wins"
+        room.last_result += f" · {green} to {red}"
+    elif room.round_type in festival.MODES and room.players:
+        leader = max(p.round_score for p in room.players.values())
+        names = ", ".join(p.name for p in room.players.values() if p.round_score == leader)
+        room.last_result = f"{names} · {leader} points"
     if room.round_type == "light":
         holder_id = room.light.get("holder") if room.light else ""
         if holder_id and holder_id in room.players:
@@ -2764,7 +2813,13 @@ def _finish_round(room):
     if finished and room.players:
         max_score = max(player.score for player in room.players.values())
         winners = [player for player in room.players.values() if player.score == max_score]
+        if room.max_rounds == 1 and room.round_type == "boss":
+            winners = list(room.players.values()) if room.festival["hp"]==0 else []
+        elif room.max_rounds == 1 and room.round_type == "heist":
+            stock=room.festival["stock"]
+            winners=[p for p in room.players.values() if stock[p.team]==max(stock)]
         for winner in winners:
+            winner.winner = True
             if winner.account_id:
                 winner.crowns = add_crowns(winner.account_id, CROWNS_PER_WIN)
     payload = _room_payload(room)
@@ -2800,12 +2855,14 @@ def _run_round_timer(room_code, round_number):
 
 
 @socketio.on("create_room")
-def handle_create_room(data):
+def handle_create_room(data=None):
     _ensure_world_loop()
-    payload = data or {}
-    name = _safe_name(payload.get("name"))
-    color = (payload.get("color") or "").strip().lower()
-    token = (payload.get("token") or "").strip()
+    payload = data if isinstance(data, dict) else {}
+    if state.get_room_by_player(request.sid):
+        return
+    name = _safe_name(text_field(payload,"name"))
+    color = text_field(payload,"color").lower()
+    token = text_field(payload,"token")
     room = state.create_room(name, request.sid, color)
     player = room.players.get(request.sid)
     if player and token:
@@ -2819,13 +2876,15 @@ def handle_create_room(data):
 
 
 @socketio.on("join_room")
-def handle_join_room(data):
+def handle_join_room(data=None):
     _ensure_world_loop()
-    payload = data or {}
-    code = (payload.get("room") or "").strip().upper()
-    name = _safe_name(payload.get("name"))
-    color = (payload.get("color") or "").strip().lower()
-    token = (payload.get("token") or "").strip()
+    payload = data if isinstance(data, dict) else {}
+    code = text_field(payload,"room").upper()
+    if state.get_room_by_player(request.sid):
+        return
+    name = _safe_name(text_field(payload,"name"))
+    color = text_field(payload,"color").lower()
+    token = text_field(payload,"token")
     if not code:
         emit("server_error", {"message": "Room code required"})
         return
@@ -2856,18 +2915,20 @@ def handle_leave_room(_data=None):
 
 
 @socketio.on("set_ready")
-def handle_set_ready(data):
-    payload = data or {}
-    ready = bool(payload.get("ready"))
+def handle_set_ready(data=None):
+    payload = data if isinstance(data, dict) else {}
+    ready = payload.get("ready")
+    if type(ready) is not bool:
+        return
     room = state.set_ready(request.sid, ready)
     if room:
         socketio.emit("room_update", _room_payload(room), to=room.code)
 
 
 @socketio.on("set_color")
-def handle_set_color(data):
-    payload = data or {}
-    color = (payload.get("color") or "").strip().lower()
+def handle_set_color(data=None):
+    payload = data if isinstance(data, dict) else {}
+    color = text_field(payload,"color").lower()
     room, error = state.set_color(request.sid, color)
     if error:
         emit("server_error", {"message": error})
@@ -2882,9 +2943,9 @@ def _store_payload(account_id):
 
 
 @socketio.on("get_store")
-def handle_get_store(data):
-    payload = data or {}
-    token = (payload.get("token") or "").strip()
+def handle_get_store(data=None):
+    payload = data if isinstance(data, dict) else {}
+    token = text_field(payload,"token")
     account_id = account_from_token(token)
     if not account_id:
         emit("store_error", {"message": "Not logged in"})
@@ -2893,10 +2954,10 @@ def handle_get_store(data):
 
 
 @socketio.on("buy_item")
-def handle_buy_item(data):
-    payload = data or {}
-    token = (payload.get("token") or "").strip()
-    item_id = (payload.get("itemId") or "").strip()
+def handle_buy_item(data=None):
+    payload = data if isinstance(data, dict) else {}
+    token = text_field(payload,"token")
+    item_id = text_field(payload,"itemId")
     account_id = account_from_token(token)
     if not account_id:
         emit("store_error", {"message": "Not logged in"})
@@ -2956,10 +3017,45 @@ def handle_remove_ai(_data=None):
     socketio.emit("room_update", _room_payload(updated), to=room.code)
 
 
+@socketio.on("festival_settings")
+def settings(data=None):
+    room = state.get_room_by_player(request.sid)
+    if not room or not isinstance(data, dict):
+        return
+    with room.lock:
+        if room.status != "lobby" or room.host_sid != request.sid:
+            return
+        mode, rounds = data.get("mode"), data.get("rounds")
+        difficulty, ai = data.get("difficulty"), data.get("ai")
+        if mode not in (*ROUND_SEQUENCE,"maze","trails","bonus","random") or type(rounds) is not int or not 0 <= rounds <= 20:
+            return
+        if difficulty not in tuple(festival.SCALE) or ai not in tuple(festival.SCALE):
+            return
+        room.selected_mode, room.requested_rounds, room.difficulty, room.ai_difficulty = mode, rounds, difficulty, ai
+        payload = _room_payload(room)
+    socketio.emit("room_update", payload, to=room.code)
+
+
+@socketio.on("festival_character")
+def choose_character(data=None):
+    room = state.get_room_by_player(request.sid)
+    if not room or not isinstance(data,dict) or data.get("character") not in festival.HEROES:
+        return
+    with room.lock:
+        if room.status != "lobby":
+            return
+        p = room.players[request.sid]
+        if p.account_id:
+            character_preference(p.account_id,data["character"])
+        p.character = data["character"]
+        payload = _room_payload(room)
+    socketio.emit("room_update", payload, to=room.code)
+
+
 @socketio.on("player_input")
-def handle_player_input(data):
+def handle_player_input(data=None):
     _ensure_world_loop()
-    payload = data or {}
+    payload = data if isinstance(data, dict) else {}
     input_x = payload.get("x", 0.0)
     input_y = payload.get("y", 0.0)
     state.set_input(request.sid, input_x, input_y)
@@ -2989,11 +3085,12 @@ def handle_start_game(_data=None):
         emit("server_error", {"message": "Only the host can start"})
         return
     with room.lock:
-        if room.status == "in_round" or room.task_running:
+        if room.status not in ("lobby","finished") or room.task_running:
             emit("server_error", {"message": "Round already running"})
             return
         for player in room.players.values():
             player.score = 0
+            player.winner = False
             player.round_score = 0
             player.ready = False
             player.alive = True
@@ -3009,6 +3106,7 @@ def handle_start_game(_data=None):
                 player.ai_dir_y = 0.0
                 player.ai_idle_until = 0.0
         room.status = "between_rounds"
+        room.last_result = ""
         room.current_round = 0
         room.round_type = "lobby"
         order = list(ROUND_SEQUENCE)
@@ -3020,6 +3118,11 @@ def handle_start_game(_data=None):
             order.insert(0, "thin_ice")
         else:
             random.shuffle(order)
+        if room.selected_mode != "random":
+            order = [room.selected_mode] * (room.requested_rounds or 1)
+        elif room.requested_rounds:
+            random.shuffle(order)
+            order = (order * room.requested_rounds)[:room.requested_rounds]
         room.round_order = order
         room.max_rounds = len(order)
         room.width = BASE_WIDTH
@@ -3057,6 +3160,7 @@ def handle_start_round(_data=None):
         round_type = order[room.current_round - 1]
         room.round_duration = ROUND_DURATIONS.get(round_type, 45)
         _setup_round(room, round_type)
+        room.round_duration = festival.round_duration(room,room.round_duration)
         room.status = "in_round"
         room.round_ends_at = time.time() + room.round_duration
         room.task_running = True
@@ -3068,13 +3172,8 @@ def handle_start_round(_data=None):
 
 @socketio.on("collect")
 def handle_collect(_data=None):
-    room, error = state.record_collect(request.sid)
-    if not room:
-        emit("server_error", {"message": "Room not found"})
-        return
-    if error:
-        return
-    socketio.emit("room_update", _room_payload(room), to=room.code)
+    # Legacy event. Pickups are resolved by the authoritative simulation.
+    return
 
 
 @socketio.on("request_state")
@@ -3093,7 +3192,7 @@ def handle_disconnect():
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "revision": os.getenv("RENDER_GIT_COMMIT", "local")}
 
 
 @socketio.on("connect")

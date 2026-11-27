@@ -18,6 +18,9 @@ SQLITE_PATH = os.getenv("SQLITE_PATH", "instance/dev.db")
 
 
 def _connect_sqlite():
+    parent = os.path.dirname(SQLITE_PATH)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(SQLITE_PATH)
     conn.row_factory = sqlite3.Row
     return conn
@@ -87,8 +90,24 @@ def init_db():
         )
         """
     )
+    cur.execute("CREATE TABLE IF NOT EXISTS character_preferences (account_id TEXT PRIMARY KEY, character TEXT NOT NULL)")
     conn.commit()
     conn.close()
+
+
+def character_preference(account_id, character=None):
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        if character is not None:
+            cur.execute(_placeholder("INSERT INTO character_preferences VALUES (%s,%s) ON CONFLICT(account_id) DO UPDATE SET character=excluded.character"), (account_id,character))
+            conn.commit()
+            return character
+        cur.execute(_placeholder("SELECT character FROM character_preferences WHERE account_id=%s"), (account_id,))
+        row = cur.fetchone()
+        return row[0] if row else "classic"
+    finally:
+        conn.close()
 
 
 def _placeholder(query):

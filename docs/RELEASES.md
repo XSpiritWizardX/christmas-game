@@ -25,3 +25,5 @@ Push a `vMAJOR.MINOR.PATCH` tag from the intended `main` commit. `.github/workfl
 ## Deployment
 
 The GitHub Release is the versioned software record. Render deployment remains a separate operational step. After deployment, verify `/health` plus a focused multiplayer smoke test and capture any remediation in a follow-up issue or PR.
+
+A change to the root VERSION file on main also publishes that version after successful push CI and release verification. The tag targets the commit that passed CI.

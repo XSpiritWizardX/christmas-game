@@ -4,7 +4,9 @@ const INSTALL_FLAG = Symbol.for("christmas-sprint-party-upgrade");
 const RESUME_TOKEN_KEY = "xmasResumeToken";
 const RESUME_SESSION_KEY = "xmasResumeSession";
 const OWNED_KEY = "xmasOwnedCosmetics";
+import { levels } from "./festival";
 const ROUND_NAMES = {
+  ...Object.fromEntries(Object.entries(levels).map(([k,v])=>[k,v[0]])),
   survival: "Survival",
   snowball: "Snowball Fight",
   hunt: "Monster Hunt",
@@ -110,7 +112,14 @@ function showCenter(title, subtitle = "", duration = 1050, mode = "default") {
   const node = ensureLayer().querySelector(".party-center");
   window.clearTimeout(centerTimer);
   node.dataset.mode = mode;
-  node.innerHTML = `<strong>${title}</strong>${subtitle ? `<span>${subtitle}</span>` : ""}`;
+  const heading=document.createElement("strong");
+  heading.textContent=title;
+  node.replaceChildren(heading);
+  if(subtitle){
+    const detail=document.createElement("span");
+    detail.textContent=subtitle;
+    node.append(detail);
+  }
   node.hidden = false;
   node.classList.remove("party-center-pop");
   void node.offsetWidth;
