@@ -838,3 +838,6 @@ html[data-motion="reduced"] *,html[data-motion="reduced"] *::before,html[data-mo
 .game-shell[data-control-size="large"] :is(.joystick-base, .action-button) { width: clamp(108px, 20vmin, 144px); height: clamp(108px, 20vmin, 144px); }
 .room-invite > div, .round-ballot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; padding: 8px; }
 .room-invite input { min-width: 0; max-width: 100%; }
+
+.quick-play { width: 100%; margin-bottom: 12px; }
+.quick-play small { display: block; font-size: .8rem; font-weight: 500; }

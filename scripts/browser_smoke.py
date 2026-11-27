@@ -116,11 +116,27 @@ def smoke(driver, browser, mode):
         mobile.close()
 
 
+def quick_play(driver, browser):
+    with browser.new_context(**driver.devices["Pixel 7"]) as mobile:
+        page = mobile.new_page()
+        page.goto(os.getenv("SMOKE_URL", "http://127.0.0.1:10000"))
+        page.get_by_role("button", name=re.compile("Quick Play")).tap()
+        page.locator(".timer-chip").wait_for(timeout=15000)
+        assert "Reindeer Raceway" in page.locator(".hud-title").inner_text()
+        assert "1 / 1" in page.locator(".round-chip").inner_text()
+        page.get_by_role("button", name="Leaderboard").tap()
+        assert page.locator(".score-row").count() == 3
+        page.reload(wait_until="domcontentloaded")
+        page.locator(".timer-chip").wait_for()
+        print("Quick Play: one tap started a three-racer match and resumed after reload", flush=True)
+
+
 if __name__ == "__main__":
     with sync_playwright() as driver:
         browser = driver.chromium.launch(
             executable_path=os.getenv("CHROMIUM_PATH") or None, args=["--no-sandbox"]
         )
+        quick_play(driver, browser)
         for mode in os.getenv("SMOKE_MODES", ",".join(MODES)).split(","):
             smoke(driver, browser, mode)
         browser.close()

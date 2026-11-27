@@ -359,7 +359,7 @@ function installObservers(socket, meta) {
 function upgradedEmit(event, ...args) {
   const meta = getMeta(this);
 
-  if (event === "create_room" || event === "join_room") {
+  if (event === "quick_play" || event === "create_room" || event === "join_room") {
     const payload = { ...(args[0] || {}) };
     meta.player = {
       name: payload.name || "Player",

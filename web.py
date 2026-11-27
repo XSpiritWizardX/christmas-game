@@ -333,6 +333,27 @@ def handle_party_start_round(_data=None):
     socketio.emit("round_started", payload, to=room_code)
     socketio.start_background_task(game_server._run_round_timer, room_code, round_number)
 
+@socketio.on("quick_play")
+def handle_quick_play(data=None):
+    if state.get_room_by_player(request.sid):
+        return
+    game_server.handle_create_room(data)
+    room = state.get_room_by_player(request.sid)
+    if not room:
+        return
+    with room.lock:
+        room.selected_mode = "raceway"
+        room.requested_rounds = 1
+        room.ai_difficulty = "easy"
+        for _ in range(2):
+            _, error = state.add_bot(room)
+            if error:
+                game_server.emit("server_error", {"message": error})
+                return
+    game_server.handle_start_game()
+    handle_party_start_round()
+
+
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve_client(path):
