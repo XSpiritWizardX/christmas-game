@@ -1,0 +1,22 @@
+{
+  "id": "/",
+  "name": "Snow Dash",
+  "short_name": "Snow Dash",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#153447",
+  "background_color": "#153447",
+  "icons": [
+    {
+      "src": "/icons/hero-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/hero-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
