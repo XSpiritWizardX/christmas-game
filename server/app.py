@@ -3192,7 +3192,7 @@ def handle_disconnect():
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "revision": os.getenv("RENDER_GIT_COMMIT", "local")}
 
 
 @socketio.on("connect")

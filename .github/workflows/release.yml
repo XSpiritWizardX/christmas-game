@@ -56,6 +56,22 @@ jobs:
       - if: steps.version.outputs.publish == 'true'
         name: Verify production image
         run: docker build -t snow-dash:release .
+      - name: Verify the merged revision in the live multiplayer service
+        if: steps.version.outputs.publish == 'true' && github.event_name == 'workflow_run'
+        env:
+          SMOKE_URL: https://christmas-game-za00.onrender.com
+        run: |
+          target=$(git rev-parse HEAD)
+          live=""
+          for attempt in {1..60}; do
+            live=$(curl -fsS --max-time 10 "$SMOKE_URL/health" | jq -r '.revision // empty') || true
+            [[ "$live" == "$target" ]] && break
+            sleep 10
+          done
+          [[ "$live" == "$target" ]]
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+          python scripts/browser_smoke.py
       - if: steps.version.outputs.publish == 'true'
         name: Publish GitHub Release
         env:
