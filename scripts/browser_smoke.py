@@ -74,7 +74,10 @@ def smoke(driver, browser, mode):
         host.wait_for_timeout(250)
         host.keyboard.up("d")
         host.keyboard.press("Space")
-        peer.locator(".action-button").tap()
+        if mode == "workshop":
+            assert peer.get_by_role("button", name="Stack", exact=True).is_disabled()
+        else:
+            peer.locator(".action-button").tap()
         p2 = next(p for p in worlds[mode]["players"] if p["id"] == p1["id"])
         assert p1["x"] != p2["x"], mode
         stick = peer.get_by_label("Movement joystick").bounding_box()
@@ -124,6 +127,8 @@ def quick_play(driver, browser):
         page.locator(".timer-chip").wait_for(timeout=15000)
         assert "Reindeer Raceway" in page.locator(".hud-title").inner_text()
         assert "1 / 1" in page.locator(".round-chip").inner_text()
+        page.get_by_role("button", name="Boost ×1").tap()
+        page.get_by_role("button", name="Boost ×0").wait_for()
         page.get_by_role("button", name="Leaderboard").tap()
         assert page.locator(".score-row").count() == 3
         page.reload(wait_until="domcontentloaded")

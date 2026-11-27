@@ -53,6 +53,10 @@ def prepare(room):
         p.x, p.y = 65, 70 + i % 8 * 50
         p.rings_left = 3
         p.cargo = p.checkpoint = 0
+        p.boost_charges = 1 if mode == "raceway" else 0
+        p.boost_until = 0
+        p.refueled_gate = -1
+        p.last_action_ts = -1
         p.last_hit_ts = -10
         p.team = i % 2 if mode == "heist" else 0
         if mode == "heist":
@@ -108,6 +112,9 @@ def prepare(room):
                 marker(x + 80, gap, "CANDY" if mode == "candy_maze" else str(i + 1), 35)
             )
         marks.append(marker(895, 270, "FINISH", 45))
+        if mode == "raceway":
+            f["fuel"] = [marker(m["x"] - 42, 38 if i % 2 == 0 else 504, "FUEL", 22)
+                         for i, m in enumerate(marks[:-1])]
     elif mode == "heist":
         marks.extend(
             [marker(80, 270, "GREEN VAULT", 55), marker(880, 270, "RED VAULT", 55)]
@@ -143,7 +150,12 @@ def action(room, p):
         return
     p.last_action_ts = room.round_elapsed
     f, mode = room.festival, room.round_type
-    if mode == "boss" and distance(p, f["markers"][0]) < 100 and f["hp"] > 0:
+    if mode == "raceway" and p.boost_charges and room.round_elapsed >= p.boost_until:
+        p.boost_charges -= 1
+        p.boost_until = room.round_elapsed + 1.15
+    elif mode == "workshop" and p.cargo == 1 and distance(p, f["markers"][0]) < f["markers"][0]["r"]:
+        p.cargo = 2
+    elif mode == "boss" and distance(p, f["markers"][0]) < 100 and f["hp"] > 0:
         f["hp"] -= 1
         award(p, 1)
         if f["hp"] == 0:
@@ -289,6 +301,12 @@ def step(room, dt, move):
     f, mode, t = room.festival, room.round_type, room.round_elapsed
     pace = SCALE[room.difficulty]
     z = t * pace
+    if mode == "raceway":
+        f["obstacles"] = [marker(m["x"] - 66, m["y"] + 43 * math.sin(z * 1.8 + i), "DRIFT", 27)
+                          for i, m in enumerate(f["markers"][:-1])]
+    elif mode == "workshop":
+        f["obstacles"] = [marker(x, 270 + 177 * math.sin(z * rate + phase), "SORTER", 34)
+                          for x, rate, phase in ((340, 1.1, 0), (590, 1.35, 2.1))]
     if mode == "lake":
         f["markers"] = [
             marker(
@@ -327,8 +345,24 @@ def step(room, dt, move):
             m = target(room, p)
             if m:
                 p.ai_target_x, p.ai_target_y = m["x"], m["y"]
-            action(room, p)
+            if mode != "raceway" or any(distance(p, m) < 90 for m in f["obstacles"]):
+                action(room, p)
         speed = 230 if mode == "raceway" else 180
+        if mode == "raceway":
+            if t < p.boost_until:
+                speed *= 1.7
+            elif any(distance(p, m) < m["r"] + 10 for m in f["obstacles"]):
+                speed *= 0.38
+            if p.checkpoint < len(f["fuel"]) and p.refueled_gate != p.checkpoint:
+                pad = f["fuel"][p.checkpoint]
+                if p.boost_charges < 2 and distance(p, pad) < pad["r"]:
+                    p.boost_charges += 1
+                    p.refueled_gate = p.checkpoint
+        elif mode == "workshop" and p.cargo == 2:
+            speed *= 0.85
+            if any(distance(p, m) < m["r"] + 10 for m in f["obstacles"]):
+                p.cargo = 1
+                p.last_hit_ts = t
         if p.is_bot:
             dx, dy = p.ai_target_x - p.x, p.ai_target_y - p.y
             length = max(speed * dt, math.hypot(dx, dy), 0.001)
@@ -376,8 +410,8 @@ def step(room, dt, move):
             )
             if distance(p, m) < m["r"]:
                 if p.cargo:
+                    award(p, 12 if mode == "workshop" and p.cargo == 2 else 5)
                     p.cargo = 0
-                    award(p, 5)
                     p.checkpoint += 1
                     if mode == "heist":
                         f["stock"][p.team] += 1

@@ -1,7 +1,7 @@
-export const actionNames = { boss: "Strike", ornaments: "Search", heist: "Guard", sleigh: "Ram" };
+export const actionNames = { raceway: "Boost", workshop: "Stack", boss: "Strike", ornaments: "Search", heist: "Guard", sleigh: "Ram" };
 export const roundTips = {
-  workshop: "Steer to LOAD, then carry the present to the marked dock.",
-  raceway: "Steer through the numbered gates in order to finish.",
+  workshop: "Load one for 5 points or tap Stack for 12. Dodge the moving sorters.",
+  raceway: "Boost through snowdrifts. Take the blue fuel lane to recharge.",
   avalanche: "Steer through the gates to reach shelter ahead of the snow.",
   chaos: "Move between the storms to stay alive.",
   candy_maze: "Steer through the passages and pick up candy canes.",

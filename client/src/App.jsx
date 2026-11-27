@@ -799,6 +799,8 @@ export default function App() {
 
   const actionLabel = (() => {
     if (!room) return "Action";
+    if (room.status === "in_round" && room.roundType === "raceway") return "Boost ×" + (you?.boostCharges ?? 1);
+    if (room.status === "in_round" && room.roundType === "workshop" && you?.cargo === 2) return "Stacked";
     if (room.status === "in_round" && actionNames[room.roundType]) return actionNames[room.roundType];
     if (room.roundType === "light" && you?.hasLight) return "Pass";
     if (room.status === "lobby") return "Throw";
@@ -817,9 +819,11 @@ export default function App() {
 
   const dashReadyAt = you?.dashReadyAt ?? 0;
   const dashReady = Date.now() / 1000 >= dashReadyAt;
-  const actionDisabled = ["trails", "thin_ice"].includes(room?.roundType)
-    ? !dashReady
-    : false;
+  const loadBay = world?.festival?.markers?.[0];
+  const canStack = loadBay && you?.cargo === 1 && Math.hypot(you.x - loadBay.x, you.y - loadBay.y) < loadBay.r;
+  const actionDisabled = (["trails", "thin_ice"].includes(room?.roundType) && !dashReady)
+    || (room?.status === "in_round" && room.roundType === "raceway" && you?.boostCharges === 0)
+    || (room?.status === "in_round" && room.roundType === "workshop" && !canStack);
   const musicPercent = Math.round(musicVolume * 100);
   const sfxPercent = Math.round(sfxVolume * 100);
   const volumeControls = (

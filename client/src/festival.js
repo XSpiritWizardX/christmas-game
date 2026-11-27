@@ -1,6 +1,6 @@
 export const levels = {
-  workshop: ["Santa's Workshop", "Pick up a present at LOAD. Deliver to the glowing dock, alternating north and south.", "#ffe1bc", "#b44538"],
-  raceway: ["Reindeer Raceway", "Pass the numbered gates in order. Reach the finish first.", "#d5ead9", "#18735b"],
+  workshop: ["Santa's Workshop", "Carry one parcel for 5 points, or stack two at LOAD for 12. A sorter knocks the top parcel off.", "#ffe1bc", "#b44538"],
+  raceway: ["Reindeer Raceway", "Race through numbered gates. Snowdrifts slow you down unless you boost. Blue fuel pads refill one charge.", "#d5ead9", "#18735b"],
   avalanche: ["Avalanche Escape", "Outrun the snow front. Pass each gate and reach shelter before losing three hearts.", "#d4dfee", "#364c79"],
   chaos: ["Christmas Chaos", "Dodge the moving storms. Their paths change every six seconds. Survive for points.", "#ede1f4", "#81397b"],
   candy_maze: ["Candy Cane Maze", "Explore the winding passages and collect candy. Each cane is worth four points. Clearing the maze ends the round.", "#f8dbe3", "#a7234b"],
@@ -50,6 +50,25 @@ export function drawArena(ctx, mode, arena, player){
   }
   if(mode==="avalanche"){ctx.fillStyle="#fff";ctx.fillRect(0,0,arena.front||0,540);}
   ctx.font="bold 13px sans-serif";ctx.textAlign="center";
+  for (const obstacle of arena.obstacles || []) {
+    ctx.beginPath();
+    ctx.arc(obstacle.x, obstacle.y, obstacle.r, 0, Math.PI * 2);
+    ctx.fillStyle = mode === "raceway" ? "#e9f9ff" : "#a54834";
+    ctx.fill();
+    ctx.strokeStyle = mode === "raceway" ? "#5985a1" : "#58261d";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.fillStyle = mode === "raceway" ? "#314e63" : "#fff3bd";
+    ctx.fillText(obstacle.label, obstacle.x, obstacle.y + 4);
+  }
+  const gate = player?.checkpoint ?? 0;
+  const fuel = arena.fuel?.[gate];
+  if (fuel && player?.refueledGate !== gate) {
+    ctx.fillStyle = "#1466a1";
+    ctx.fillRect(fuel.x - 22, fuel.y - 18, 44, 36);
+    ctx.fillStyle = "#fff";
+    ctx.fillText("+FUEL", fuel.x, fuel.y + 5);
+  }
   for(const [i,m] of arena.markers.entries()){
     ctx.beginPath();ctx.arc(m.x,m.y,m.r,0,Math.PI*2);
     ctx.fillStyle=mode==="lake"?"#e6fbff":accent;ctx.fill();
