@@ -51,6 +51,9 @@ class PlayerState:
     round_score: int = 0
     winner: bool = False
     character: str = "classic"
+    boost_charges: int = 0
+    boost_until: float = 0
+    refueled_gate: int = -1
     cargo: int = 0
     checkpoint: int = 0
     ready: bool = False

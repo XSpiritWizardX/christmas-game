@@ -560,6 +560,14 @@ export default function GameCanvas({ world, room, youId, roundType }) {
           ctx.lineWidth = 3;
           ctx.stroke();
         }
+        if (player.boosting) {
+          ctx.beginPath();
+          ctx.moveTo(px - 7, py + 5);
+          ctx.lineTo(px - 40 * (player.fx || 0), py - 40 * (player.fy || 0));
+          ctx.lineTo(px + 7, py + 5);
+          ctx.fillStyle = "#ffad32";
+          ctx.fill();
+        }
         if (roundType==="sleigh" || roundType==="raceway"){
           ctx.fillStyle=player.team ? "#1d6053" : "#ac3445";
           ctx.fillRect(px-22,py+8,44,9);
@@ -567,6 +575,7 @@ export default function GameCanvas({ world, room, youId, roundType }) {
           ctx.fillRect(px+22,py+13,4,7);
         }
         if (player.cargo && (roundType==="heist" || roundType==="workshop")){
+          if (player.cargo === 2) { ctx.fillStyle = "#167b73"; ctx.fillRect(px+14, py-30, 12, 12); }
           ctx.fillStyle="#b52e41";ctx.fillRect(px+14,py-17,12,12);
           ctx.fillStyle="#ffd36b";ctx.fillRect(px+18,py-18,3,13);
         }

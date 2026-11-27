@@ -181,3 +181,40 @@ class ObjectiveTests(unittest.TestCase):
         room.round_elapsed = 0.65
         festival.step(room, 0, lambda *args: None)
         self.assertEqual(room.festival["danger"], warning)
+
+    def test_race_boost_beats_drift_and_each_pad_refuels_once(self):
+        room, racer = self.arena("raceway")
+        room.round_elapsed = 1
+        speeds = {}
+        def record_speed(room, player, dt, speed):
+            speeds[player.sid] = speed
+        festival.step(room, 0, record_speed)
+        drift = room.festival["obstacles"][0]
+        racer.x, racer.y = drift["x"], drift["y"]
+        festival.step(room, 0, record_speed)
+        slow = speeds[racer.sid]
+        festival.action(room, racer)
+        festival.step(room, 0, record_speed)
+        self.assertGreater(speeds[racer.sid], slow * 3)
+        self.assertEqual(racer.boost_charges, 0)
+        pad = room.festival["fuel"][0]
+        racer.x, racer.y = pad["x"], pad["y"]
+        for _ in range(3):
+            festival.step(room, 0, record_speed)
+        self.assertEqual(racer.boost_charges, 1)
+
+    def test_workshop_stack_reward_and_sorter_loss(self):
+        for collide, expected in ((False, 12), (True, 5)):
+            room, carrier = self.arena("workshop")
+            carrier.x, carrier.y = 100, 270
+            self.tick(room)
+            festival.action(room, carrier)
+            self.assertEqual(carrier.cargo, 2)
+            if collide:
+                sorter = room.festival["obstacles"][0]
+                carrier.x, carrier.y = sorter["x"], sorter["y"]
+                self.tick(room)
+                self.assertEqual(carrier.cargo, 1)
+            carrier.x, carrier.y = 830, 120
+            self.tick(room)
+            self.assertEqual((carrier.score, carrier.cargo), (expected, 0))
