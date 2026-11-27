@@ -1,3 +1,4 @@
+import { roundTips } from "./roundTips.js";
 import { Socket } from "socket.io-client";
 
 const INSTALL_FLAG = Symbol.for("christmas-sprint-party-upgrade");
@@ -214,7 +215,9 @@ function getMeta(socket) {
   let meta = socketMeta.get(socket);
   if (meta) return meta;
 
-  const restored = loadResumeSession();
+  const saved = loadResumeSession();
+  const invite = new URLSearchParams(location.search).get("room")?.toUpperCase();
+  const restored = invite && invite !== saved?.roomCode ? null : saved;
   meta = {
     resumeToken: makeResumeToken(),
     roomCode: restored?.roomCode || "",
@@ -263,12 +266,15 @@ function installObservers(socket, meta) {
   });
 
   socket.on("room_joined", (payload) => {
+    const resumedRound = meta.reconnecting && payload?.room?.status === "in_round";
     meta.roomCode = payload?.room?.code || meta.roomCode;
     meta.youId = payload?.youId || meta.youId;
     meta.reconnecting = false;
     saveResumeSession(meta);
     hideConnection();
-    if (meta.roomCode) {
+    if (resumedRound) {
+      showCenter("Back in the round", roundTips[payload.room.roundType], 3500, "success");
+    } else if (meta.roomCode) {
       showCenter("CONNECTED", `Room ${meta.roomCode}`, 650, "success");
     }
   });
@@ -278,6 +284,7 @@ function installObservers(socket, meta) {
     const message = payload?.message || "Unable to resume match";
     if (/not found|already started/i.test(message)) {
       clearResumeSession(meta);
+      window.dispatchEvent(new Event("snowdash:resume-expired"));
       showConnection("Previous match expired. Create or join a room to keep playing.", "error");
       window.setTimeout(hideConnection, 4200);
     }
@@ -288,10 +295,10 @@ function installObservers(socket, meta) {
     const roundName = ROUND_NAMES[payload?.roundType] || "Next Round";
     if (value === "GO!") {
       haptic([30, 35, 55]);
-      showCenter("GO!", roundName, 850, "go");
+      showCenter("GO!", roundTips[payload.roundType] || roundName, 850, "go");
     } else {
       haptic(24);
-      showCenter(value, `${roundName} · Round ${payload?.round || ""}`, 690, "countdown");
+      showCenter(value, `${roundName} · ${roundTips[payload.roundType] || "Get ready!"}`, 690, "countdown");
     }
   });
 
@@ -379,7 +386,7 @@ function upgradedEmit(event, ...args) {
     const last = meta.lastInput;
     const changed = !last || last.x !== payload.x || last.y !== payload.y;
     const minGap = changed ? 25 : 250;
-    if (now - meta.lastInputAt < minGap) return this;
+    if ((payload.x !== 0 || payload.y !== 0) && now - meta.lastInputAt < minGap) return this;
     meta.lastInputAt = now;
     meta.lastInput = { x: payload.x, y: payload.y };
   }

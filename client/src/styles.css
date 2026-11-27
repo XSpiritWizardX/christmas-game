@@ -832,3 +832,9 @@ button {
 
 html[data-motion="reduced"] *,html[data-motion="reduced"] *::before,html[data-motion="reduced"] *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}html[data-motion="reduced"] .party-snow,html[data-motion="reduced"] .party-confetti{display:none}
 .game-shell::before{content:"";pointer-events:none;position:absolute;inset:0 0 auto;height:8px;z-index:2;background:radial-gradient(circle at 6px 4px,#ffc951 0 3px,transparent 4px),radial-gradient(circle at 24px 4px,#e85862 0 3px,transparent 4px),radial-gradient(circle at 42px 4px,#5cba93 0 3px,transparent 4px);background-size:54px 8px}
+
+.game-shell[data-hand="left"] .bottom-left { left: auto; right: max(16px, env(safe-area-inset-right)); }
+.game-shell[data-hand="left"] .bottom-right { right: auto; left: max(16px, env(safe-area-inset-left)); }
+.game-shell[data-control-size="large"] :is(.joystick-base, .action-button) { width: clamp(108px, 20vmin, 144px); height: clamp(108px, 20vmin, 144px); }
+.room-invite > div, .round-ballot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; padding: 8px; }
+.room-invite input { min-width: 0; max-width: 100%; }

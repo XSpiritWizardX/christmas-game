@@ -153,3 +153,31 @@ class ObjectiveTests(unittest.TestCase):
             (room.host_sid, p.score, p.cargo, p.character),
             ("recovered", 7, 1, "knight"),
         )
+
+    def test_round_votes_choose_next_round_and_preserve_fixed_playlist(self):
+        votes = web.game_server.round_vote
+        room, player = self.arena("boss")
+        room.status, room.selected_mode = "between_rounds", "random"
+        room.current_round = 1
+        room.round_order = ["boss", "lake", "workshop"]
+        self.assertEqual(votes.winner(room), "lake")
+        room.round_votes[player.sid] = "workshop"
+        self.assertEqual(votes.winner(room), "workshop")
+        votes.apply(room)
+        self.assertEqual(room.round_order, ["boss", "workshop", "lake"])
+        self.assertFalse(room.round_votes)
+        room.round_votes[player.sid] = "boss"
+        self.assertEqual(votes.winner(room), "boss")
+        room.selected_mode = "boss"
+        self.assertEqual(votes.ballot(room), [])
+
+    def test_boss_warnings_precede_damage(self):
+        room, _ = self.arena("boss")
+        room.round_elapsed = 0
+        festival.step(room, 0, lambda *args: None)
+        warning = room.festival["warning"]
+        self.assertTrue(warning)
+        self.assertFalse(room.festival["danger"])
+        room.round_elapsed = 0.65
+        festival.step(room, 0, lambda *args: None)
+        self.assertEqual(room.festival["danger"], warning)

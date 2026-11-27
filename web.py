@@ -181,6 +181,8 @@ def _resume_player(room, old_sid, new_sid):
     player = room.players.pop(old_sid, None)
     if not player:
         return False
+    if old_sid in room.round_votes:
+        room.round_votes[new_sid] = room.round_votes.pop(old_sid)
     player.sid = new_sid
     room.players[new_sid] = player
     if room.host_sid == old_sid:
@@ -288,6 +290,7 @@ def handle_party_start_round(_data=None):
         if room.task_running:
             game_server.emit("server_error", {"message": "Round already running"})
             return
+        game_server.round_vote.apply(room)
         order = room.round_order or list(game_server.ROUND_SEQUENCE)
         next_index = room.current_round
         if next_index >= len(order):

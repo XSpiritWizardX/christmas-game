@@ -9,6 +9,7 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 import festival
+import round_vote
 from store import character_preference
 from game_state import GameState
 from store import (
@@ -293,11 +294,12 @@ def _next_round_type(room):
     order = room.round_order or list(ROUND_SEQUENCE)
     if room.current_round >= len(order):
         return ""
-    return order[room.current_round]
+    return round_vote.winner(room) or order[room.current_round]
 
 
 def _room_payload(room):
     payload = state.serialize_room(room)
+    payload["ballot"] = round_vote.ballot(room)
     payload["nextRoundType"] = _next_round_type(room)
     return {"room": payload}
 
@@ -3123,6 +3125,7 @@ def handle_start_game(_data=None):
         elif room.requested_rounds:
             random.shuffle(order)
             order = (order * room.requested_rounds)[:room.requested_rounds]
+        room.round_votes.clear()
         room.round_order = order
         room.max_rounds = len(order)
         room.width = BASE_WIDTH
@@ -3130,6 +3133,20 @@ def handle_start_game(_data=None):
         room.round_ends_at = 0.0
         room.task_running = False
     socketio.emit("room_update", _room_payload(room), to=room.code)
+
+
+@socketio.on("vote_round")
+def handle_round_vote(data=None):
+    room = state.get_room_by_player(request.sid)
+    if not room or not isinstance(data, dict):
+        return
+    with room.lock:
+        mode = data.get("mode")
+        if data.get("round") != room.current_round or mode not in round_vote.options(room):
+            return
+        room.round_votes[request.sid] = mode
+        payload = _room_payload(room)
+    socketio.emit("room_update", payload, to=room.code)
 
 
 @socketio.on("start_round")
@@ -3152,6 +3169,7 @@ def handle_start_round(_data=None):
         if room.task_running:
             emit("server_error", {"message": "Round already running"})
             return
+        round_vote.apply(room)
         room.current_round += 1
         order = room.round_order or list(ROUND_SEQUENCE)
         if room.current_round > len(order):

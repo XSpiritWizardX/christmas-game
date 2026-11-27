@@ -1,3 +1,5 @@
+import { RoomInvite, inviteCode } from "./mobileParty.jsx";
+import { actionNames, roundTips } from "./roundTips.js";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import GameCanvas from "./GameCanvas.jsx";
@@ -203,7 +205,9 @@ export default function App() {
   const prevGiftsRef = useRef([]);
   const [connected, setConnected] = useState(false);
   const [name, setName] = useState(defaultName);
-  const [roomCode, setRoomCode] = useState("");
+  const [roomCode, setRoomCode] = useState(inviteCode);
+  const [hand, setHand] = useState(() => localStorage.getItem("controlHand") || "right");
+  const [size, setSize] = useState(() => localStorage.getItem("controlSize") || "standard");
   const [room, setRoom] = useState(null);
   const [world, setWorld] = useState(null);
   const [youId, setYouId] = useState("");
@@ -360,7 +364,12 @@ export default function App() {
       setStoreError(payload?.message || "Store error");
     });
 
-    return () => socket.disconnect();
+    const expired = () => { resetState(); setError("Your room reservation expired. Join another room or create one."); };
+    window.addEventListener("snowdash:resume-expired", expired);
+    return () => {
+      window.removeEventListener("snowdash:resume-expired", expired);
+      socket.disconnect();
+    };
   }, []);
 
   useEffect(() => {
@@ -717,6 +726,16 @@ export default function App() {
     emit("remove_ai");
   };
 
+  useEffect(() => {
+    const remind = () => {
+      if (!document.hidden && connected && room?.status === "in_round") {
+        setAnnouncement({ message: roundTips[room.roundType], duration: 3 });
+      }
+    };
+    document.addEventListener("visibilitychange", remind);
+    return () => document.removeEventListener("visibilitychange", remind);
+  }, [connected, room?.status, room?.roundType]);
+
   const handleStartRound = () => {
     emit("start_round");
   };
@@ -776,6 +795,8 @@ export default function App() {
 
   const actionLabel = (() => {
     if (!room) return "Action";
+    if (room.status === "in_round" && actionNames[room.roundType]) return actionNames[room.roundType];
+    if (room.roundType === "light" && you?.hasLight) return "Pass";
     if (room.status === "lobby") return "Throw";
     if (room.roundType === "snowball" || room.roundType === "light")
       return "Throw";
@@ -799,6 +820,12 @@ export default function App() {
   const sfxPercent = Math.round(sfxVolume * 100);
   const volumeControls = (
     <div className="volume-controls">
+      <label>Action button side <select value={hand} onChange={e => { setHand(e.target.value); localStorage.setItem("controlHand", e.target.value); }}>
+        <option value="right">Right</option><option value="left">Left</option>
+      </select></label>
+      <label>Control size <select value={size} onChange={e => { setSize(e.target.value); localStorage.setItem("controlSize", e.target.value); }}>
+        <option value="standard">Standard</option><option value="large">Large</option>
+      </select></label>
       <div className="slider-row">
         <label className="slider-label" htmlFor="music-volume">
           Music
@@ -868,6 +895,7 @@ export default function App() {
                 <input
                   value={name}
                   onChange={(event) => setName(event.target.value)}
+                  autoFocus={Boolean(inviteCode())}
                   placeholder="Santa"
                   maxLength={16}
                 />
@@ -933,7 +961,7 @@ export default function App() {
       )}
 
       {room && (
-        <div className="game-shell">
+        <div className="game-shell" data-hand={hand} data-control-size={size}>
           <GameCanvas world={world} room={room} youId={youId} roundType={room.roundType} />
 
           <div className="hud top-left">
@@ -1005,6 +1033,7 @@ export default function App() {
                       </button>
                     </div>
                     <FestivalMenu room={room} you={you} host={isHost} emit={emit} />
+                    <RoomInvite code={room.code} />
                     {volumeControls}
 
                     <div className="color-section compact">
@@ -1049,6 +1078,11 @@ export default function App() {
                 <div className="overlay-title">Next Round: {roundLabel(nextRoundType)}</div>
                 <div className="overlay-sub">{roundInstruction(nextRoundType)}</div>
                 <div className="overlay-sub">Waiting for host · Start round {nextRound} when ready.</div>
+                {room.ballot?.length > 0 && <div className="round-ballot" aria-label="Vote on the next round">
+                  {room.ballot.map(({mode, votes}) => <button key={mode} disabled={counting} onClick={() => emit("vote_round", {mode, round: room.currentRound})}>
+                    {mode === room.roundType ? "Rematch" : roundLabel(mode)} ({votes})
+                  </button>)}
+                </div>}
                 {isHost && room.currentRound < room.maxRounds && (
                   <button className="primary" onClick={handleStartRound}>
                     Start round {nextRound}
@@ -1109,6 +1143,7 @@ export default function App() {
                 </div>
 
                 <div className="final-actions">
+                  {isHost && <button onClick={() => emit("start_game")}>Rematch</button>}
                   <button className="primary" onClick={handleLeave}>
                     Back to home
                   </button>

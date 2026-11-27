@@ -550,6 +550,16 @@ export default function GameCanvas({ world, room, youId, roundType }) {
         const heroFlip = (player.fx ?? 1) < -0.1 ? -1 : 1;
 
         ctx.globalAlpha = player.alive ? 1 : 0.35;
+        if (player.id === youId) {
+          ctx.beginPath();
+          ctx.ellipse(px, py + 17, 32, 11, 0, 0, Math.PI * 2);
+          ctx.strokeStyle = "#152633";
+          ctx.lineWidth = 7;
+          ctx.stroke();
+          ctx.strokeStyle = "#fff8a5";
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        }
         if (roundType==="sleigh" || roundType==="raceway"){
           ctx.fillStyle=player.team ? "#1d6053" : "#ac3445";
           ctx.fillRect(px-22,py+8,44,9);
