@@ -204,3 +204,9 @@ Tags matching `vMAJOR.MINOR.PATCH` trigger `.github/workflows/release.yml`. Befo
 ## Security and fairness
 
 The server is the authority for shared multiplayer outcomes; client input is treated as untrusted intent. Credentials and production database URLs belong in deployment environment variables, never source control. Security-sensitive reports should use GitHub private vulnerability reporting rather than public issues. See [SECURITY.md](SECURITY.md).
+
+### Christmas festival
+
+Create a room, open **Menu**, and choose a character. The host can pick a level, round count, hazard difficulty and bot difficulty before starting. Random rotation includes classic and festival rounds. Use WASD or the movement joystick. Space or the Action button interacts with nearby targets. Each intermission shows the next objective.
+
+The festival includes Santa's Workshop, Reindeer Raceway, Avalanche Escape, Christmas Chaos, Candy Cane Maze, Frozen Lake, Grinch's Heist, North Pole Boss Battle, Sleigh Battle and Ornament Hunt. Hidden ornaments are revealed by searching trees. In the boss arena every player can damage the same enemy. In Heist, protect your team's vault while carrying gifts home.

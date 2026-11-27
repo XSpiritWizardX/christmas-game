@@ -4,7 +4,9 @@ const INSTALL_FLAG = Symbol.for("christmas-sprint-party-upgrade");
 const RESUME_TOKEN_KEY = "xmasResumeToken";
 const RESUME_SESSION_KEY = "xmasResumeSession";
 const OWNED_KEY = "xmasOwnedCosmetics";
+import { levels } from "./festival";
 const ROUND_NAMES = {
+  ...Object.fromEntries(Object.entries(levels).map(([k,v])=>[k,v[0]])),
   survival: "Survival",
   snowball: "Snowball Fight",
   hunt: "Monster Hunt",

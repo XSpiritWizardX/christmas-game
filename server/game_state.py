@@ -1,3 +1,4 @@
+import math
 import random
 import string
 import threading
@@ -48,6 +49,9 @@ class PlayerState:
     color: str
     score: int = 0
     round_score: int = 0
+    character: str = "classic"
+    cargo: int = 0
+    checkpoint: int = 0
     ready: bool = False
     is_bot: bool = False
     last_collect_ts: float = 0.0
@@ -89,6 +93,11 @@ class RoomState:
     players: dict = field(default_factory=dict)
     status: str = "lobby"
     current_round: int = 0
+    festival: dict = field(default_factory=dict)
+    difficulty: str = "medium"
+    ai_difficulty: str = "medium"
+    selected_mode: str = "random"
+    requested_rounds: int = 0
     round_duration: int = 20
     intermission: int = 8
     max_rounds: int = 5
@@ -286,6 +295,7 @@ class GameState:
                     "id": player.sid,
                     "name": player.name,
                     "color": player.color,
+                    "character": player.character,
                     "x": player.x,
                     "y": player.y,
                     "score": player.score,
@@ -303,6 +313,7 @@ class GameState:
         return {
             "code": room.code,
             "status": room.status,
+            "settings": [room.selected_mode, room.requested_rounds, room.difficulty, room.ai_difficulty],
             "currentRound": room.current_round,
             "hostId": room.host_sid,
             "players": players,
@@ -347,8 +358,11 @@ class GameState:
         with room.lock:
             player = room.players.get(sid)
             if player:
-                player.input_x = max(-1.0, min(1.0, float(input_x)))
-                player.input_y = max(-1.0, min(1.0, float(input_y)))
+                if any(type(v) not in (float, int) or not -1 <= v <= 1 for v in (input_x, input_y)):
+                    return room
+                scale = max(1, math.hypot(input_x, input_y))
+                player.input_x = input_x / scale
+                player.input_y = input_y / scale
                 if abs(player.input_x) > 0.1 or abs(player.input_y) > 0.1:
                     player.facing_x = player.input_x
                     player.facing_y = player.input_y

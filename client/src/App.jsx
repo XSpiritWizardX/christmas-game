@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import GameCanvas from "./GameCanvas.jsx";
 import Joystick from "./Joystick.jsx";
@@ -33,6 +33,8 @@ const COLOR_LOOKUP = PLAYER_COLORS.reduce((acc, color) => {
   return acc;
 }, {});
 
+import { levels, heroes, festivalTrack } from "./festival";
+
 const MUSIC_TRACKS = {
   menu: "/assets/audio/gamergang-silent-moments-258504.mp3",
   lobby: "/assets/audio/The_Christmas_Spirit_is_Here_2025-12-23T171642.wav",
@@ -50,10 +52,28 @@ const SFX_TRACKS = {
   whoosh: "/assets/audio/whoosh.wav",
   collect: "/assets/audio/collect.wav"
 };
+function FestivalMenu({room,you,host,emit}) {
+  const [mode,rounds,difficulty,ai] = room.settings || ["random",0,"medium","medium"];
+  const settings = {mode,rounds,difficulty,ai};
+  const select = (label,key,options) => <label>{label} <select aria-label={label} value={settings[key]} onChange={e=>emit("festival_settings",{...settings,[key]:key==="rounds"?Number(e.target.value):e.target.value})}>{options.map(([value,name])=><option key={value} value={value}>{name}</option>)}</select></label>;
+  const [quiet,setQuiet]=useState(()=>document.documentElement.dataset.motion==="reduced");
+  return <section className="festival-menu">
+    <label><input type="checkbox" checked={quiet} onChange={e=>{const value=e.target.checked?"reduced":"auto"; localStorage.setItem("snowMotion",value); document.documentElement.dataset.motion=value; setQuiet(e.target.checked);}}/> Reduce motion</label>
+    {host && <div className="festival-settings">
+      {select("Level","mode",[["random","Random rotation"],...["snowball","survival","hunt","thin_ice","hill","light","ice","trails","maze","bonus"].map(k=>[k,k.replace("_"," ")]),...Object.entries(levels).map(([k,v])=>[k,v[0]])])}
+      {select("Rounds","rounds",Array.from({length:21},(_,i)=>[i,i||"Automatic"]))}
+      {["difficulty","ai"].map(k=><React.Fragment key={k}>{select(k==="ai"?"Bot difficulty":"Hazard difficulty",k,["easy","medium","hard"].map(v=>[v,v]))}</React.Fragment>)}
+    </div>}
+    <h3>Choose your character</h3><div className="festival-roster">
+    {Object.entries({classic:"Classic",...heroes}).map(([id,label])=><button type="button" key={id} aria-pressed={(you?.character||"classic")===id} onClick={()=>emit("festival_character",{character:id})}><img alt="" src={id==="classic"?"/assets/pixel/players/player-red.svg":"/assets/festival/"+id+".svg"}/>{label}</button>)}
+    </div></section>;
+}
+document.documentElement.dataset.motion = localStorage.getItem("snowMotion") || "auto";
 const DEFAULT_MUSIC_VOLUME = 0.5;
 const DEFAULT_SFX_VOLUME = 0.4;
 
 const roundName = (roundType) => {
+  if (levels[roundType]) return levels[roundType][0];
   switch (roundType) {
     case "survival":
       return "Round 5 - Survival";
@@ -79,6 +99,7 @@ const roundName = (roundType) => {
 };
 
 const roundLabel = (roundType) => {
+  if (levels[roundType]) return levels[roundType][0];
   switch (roundType) {
     case "survival":
       return "Survival";
@@ -104,6 +125,7 @@ const roundLabel = (roundType) => {
 };
 
 const roundInstruction = (roundType) => {
+  if (levels[roundType]) return levels[roundType][1];
   switch (roundType) {
     case "survival":
       return "Dodge falling snowflakes and grab candy for points. Defeat the enemies to even the odds.";
@@ -194,13 +216,14 @@ export default function App() {
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(() => localStorage.getItem("musicMuted") === "true");
   const [musicVolume, setMusicVolume] = useState(() => {
-    const stored = Number(localStorage.getItem("musicVolume"));
+    const stored = Number(localStorage.getItem("musicVolume") ?? DEFAULT_MUSIC_VOLUME);
     return Number.isFinite(stored) ? clamp01(stored) : DEFAULT_MUSIC_VOLUME;
   });
   const [sfxVolume, setSfxVolume] = useState(() => {
-    const stored = Number(localStorage.getItem("sfxVolume"));
+    const stored = Number(localStorage.getItem("sfxVolume") ?? DEFAULT_SFX_VOLUME);
     return Number.isFinite(stored) ? clamp01(stored) : DEFAULT_SFX_VOLUME;
   });
+  const [counting,setCounting]=useState(false);
   const [needsTap, setNeedsTap] = useState(false);
   const [announcement, setAnnouncement] = useState(null);
   const [storeOpen, setStoreOpen] = useState(false);
@@ -311,9 +334,10 @@ export default function App() {
       });
       setRoom((prev) => {
         if (!payload.room) return prev;
-        return { ...payload.room, players: payload.world.players };
+        return { ...prev, ...payload.room, players: payload.world.players };
       });
     });
+    socket.on("party_countdown",payload=>setCounting(payload.value!=="GO!"));
     socket.on("round_started", (payload) => {
       setRoom(payload.room);
     });
@@ -370,37 +394,43 @@ export default function App() {
     localStorage.setItem("sfxVolume", String(sfxVolume));
   }, [sfxVolume]);
 
-  useEffect(() => {
-    if (!room) return undefined;
-    const id = setInterval(() => {
-      const current = inputRef.current;
-      emit("player_input", { x: current.x, y: current.y });
-    }, 16);
-    return () => clearInterval(id);
-  }, [room?.code]);
-
   const trackSrc = useMemo(() => {
     if (!room) return MUSIC_TRACKS.menu;
+    if (room.status === "finished") {
+      const me=room.players.find(p=>p.id===youId);
+      return festivalTrack(me && me.score===Math.max(...room.players.map(p=>p.score))?"victory":"defeat");
+    }
+    if (counting) return festivalTrack("countdown");
     if (room.status === "lobby") return MUSIC_TRACKS.lobby;
     const roundType = room.roundType || "lobby";
+    if (levels[roundType]) return festivalTrack(roundType);
     return MUSIC_TRACKS[roundType] || MUSIC_TRACKS.lobby;
-  }, [room?.roundType, room?.status]);
+  }, [room?.roundType, room?.status, counting]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !trackSrc) return;
-    if (currentTrackRef.current !== trackSrc) {
+    const changed = currentTrackRef.current !== trackSrc;
+    if (changed) {
       currentTrackRef.current = trackSrc;
       audio.src = trackSrc;
       audio.load();
     }
     audio.loop = true;
-    audio.volume = musicVolume;
+    audio.volume = changed ? 0 : musicVolume;
     audio.muted = isMuted;
     const playPromise = audio.play();
     if (playPromise && typeof playPromise.catch === "function") {
       playPromise.catch(() => setNeedsTap(true));
     }
+    if (!changed) return;
+    const start=performance.now();
+    const fade=setInterval(()=>{
+      const fraction=Math.min(1,(performance.now()-start)/450);
+      audio.volume=musicVolume*fraction;
+      if (fraction===1) clearInterval(fade);
+    },30);
+    return ()=>clearInterval(fade);
   }, [trackSrc, isMuted, musicVolume]);
 
   useEffect(() => {
@@ -634,6 +664,7 @@ export default function App() {
   };
 
   const handleStart = () => {
+    setMenuOpen(false);
     emit("start_game");
   };
 
@@ -657,7 +688,7 @@ export default function App() {
   const playSfx = (name) => {
     const entry = sfxRef.current[name];
     if (!entry || !entry.pool || entry.pool.length === 0) return;
-    if (sfxVolume <= 0) return;
+    if (isMuted || sfxVolume <= 0) return;
     const index = entry.index % entry.pool.length;
     entry.index += 1;
     const audio = entry.pool[index];
@@ -669,6 +700,15 @@ export default function App() {
   const playWhoosh = () => playSfx("whoosh");
   const playCollect = () => playSfx("collect");
 
+  const priorVitals=useRef(null);
+  useEffect(()=>{
+    const prior=priorVitals.current;
+    if (levels[room?.roundType] && room?.status==="in_round" && prior?.round===room.currentRound) {
+      if (you?.ringsLeft<prior.hearts) playWhoosh();
+      else if (you?.roundScore>prior.score || you?.cargo>prior.cargo) playCollect();
+    }
+    priorVitals.current={round:room?.currentRound,hearts:you?.ringsLeft,score:you?.roundScore,cargo:you?.cargo};
+  },[room?.currentRound,room?.status,you?.ringsLeft,you?.roundScore,you?.cargo]);
   const handleAddAi = () => {
     emit("add_ai");
   };
@@ -696,7 +736,7 @@ export default function App() {
       roundType === "ice" ||
       roundType === "hunt" ||
       roundType === "hill";
-    if (isThrowRound && !(roundType === "light" && you?.hasLight)) {
+    if ((isThrowRound || levels[roundType]) && !(roundType === "light" && you?.hasLight)) {
       playWhoosh();
     }
   };
@@ -719,14 +759,10 @@ export default function App() {
 
   const handleJoystick = (x, y) => {
     inputRef.current = { x, y };
-    const now = performance.now();
-    const last = lastInputSentRef.current;
-    const lastValue = lastInputValueRef.current;
-    const changed = lastValue.x !== x || lastValue.y !== y;
-    if (changed && now - last >= 16) {
-      lastInputSentRef.current = now;
-      lastInputValueRef.current = { x, y };
-      emit("player_input", { x, y });
+    const last = lastInputValueRef.current;
+    if (last.x !== x || last.y !== y) {
+      lastInputValueRef.current = {x,y};
+      emit("player_input",{x,y});
     }
   };
 
@@ -968,6 +1004,7 @@ export default function App() {
                         Leave
                       </button>
                     </div>
+                    <FestivalMenu room={room} you={you} host={isHost} emit={emit} />
                     {volumeControls}
 
                     <div className="color-section compact">

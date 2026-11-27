@@ -47,6 +47,9 @@ jobs:
       - name: Install client dependencies
         working-directory: client
         run: npm ci
+      - name: Test client assets and audio
+        working-directory: client
+        run: npm test
       - name: Build React client
         working-directory: client
         run: npm run build
@@ -59,3 +62,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build single-service production image
         run: docker build -t snow-dash:ci .
+      - name: Exercise the production container with desktop and mobile clients
+        run: |
+          docker run -d --name snow-dash -p 10000:10000 -e SQLITE_PATH=/tmp/smoke.db snow-dash:ci
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+          curl --retry 12 --retry-all-errors --fail http://localhost:10000/health
+          python scripts/browser_smoke.py
+      - name: Print server diagnostics
+        if: failure()
+        run: docker logs snow-dash
