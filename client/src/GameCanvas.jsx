@@ -216,7 +216,8 @@ export default function GameCanvas({ world, room, youId, roundType }) {
     const baseScale = Math.min(canvas.width / targetViewWidth, canvas.height / targetViewHeight);
     const zoom = roundType && roundType !== "lobby" ? (useFixedView ? 1.0 : 1.15) : 1.0;
     const scale = baseScale * zoom;
-    const now = performance.now() / 1000;
+    const animate = document.documentElement.dataset.motion!=="reduced" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const now = animate ? performance.now()/1000 : 0;
 
     const viewWidth = canvas.width / scale;
     const viewHeight = canvas.height / scale;
@@ -540,7 +541,6 @@ export default function GameCanvas({ world, room, youId, roundType }) {
           : worldHeight / 2 + Math.floor(index / 4) * 36 - 36;
         const left = px - size / 2;
         const top = py - size / 2;
-        const animate = document.documentElement.dataset.motion!=="reduced" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         const moving = player.moving && animate;
         const direction = getDirection(player.fx ?? 1, player.fy ?? 0);
         const step = moving ? Math.floor((now * 8 + getSeed(player.id)) % 2) : 0;
@@ -550,13 +550,23 @@ export default function GameCanvas({ world, room, youId, roundType }) {
         const heroFlip = (player.fx ?? 1) < -0.1 ? -1 : 1;
 
         ctx.globalAlpha = player.alive ? 1 : 0.35;
+        if (roundType==="sleigh" || roundType==="raceway"){
+          ctx.fillStyle=player.team ? "#1d6053" : "#ac3445";
+          ctx.fillRect(px-22,py+8,44,9);
+          ctx.fillStyle="#efb64b";ctx.fillRect(px-25,py+19,50,3);
+          ctx.fillRect(px+22,py+13,4,7);
+        }
+        if (player.cargo && (roundType==="heist" || roundType==="workshop")){
+          ctx.fillStyle="#b52e41";ctx.fillRect(px+14,py-17,12,12);
+          ctx.fillStyle="#ffd36b";ctx.fillRect(px+18,py-18,3,13);
+        }
         if (heroSprite && heroSprite.complete) {
           const heroSize = 64;
           ctx.save();
           ctx.translate(px, py + heroBob + (animate && player.acting?-4:0) + (animate && !moving ? Math.sin(now*3)*.7 : 0));
           if (player.hurt) ctx.rotate(.18);
           if (!player.alive) ctx.rotate(.9);
-          if (room?.status==="finished" && player.score===Math.max(...snapshot.players.map(p=>p.score))) ctx.rotate(.12*Math.sin(now*8));
+          if (room?.status==="finished" && player.winner) ctx.rotate(.12*Math.sin(now*8));
           ctx.scale(heroFlip * (1 + heroWobble), 1 - heroWobble);
           ctx.drawImage(heroSprite, -heroSize / 2, -heroSize / 2, heroSize, heroSize);
           ctx.restore();
@@ -674,7 +684,6 @@ export default function GameCanvas({ world, room, youId, roundType }) {
 
       }
 
-      drawArena(ctx,roundType,snapshot.festival,snapshot.players?.find(p=>p.id===youId));
     if (snapshot.players) {
         snapshot.players.forEach((player) => {
           ctx.fillStyle = COLOR_HEX[player.color] || "#2a1a12";

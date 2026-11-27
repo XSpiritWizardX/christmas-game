@@ -55,8 +55,52 @@ export function drawArena(ctx, mode, arena, player){
     ctx.fillStyle=mode==="lake"?"#e6fbff":accent;ctx.fill();
     ctx.strokeStyle=mode==="workshop" && i===(player?.cargo?1+(player.checkpoint%2):0)?"#ffbc20":"#ffffff";ctx.lineWidth=4;ctx.stroke();
     ctx.fillStyle=mode==="lake"?accent:"#fff";
-    ctx.fillText(mode==="boss"?"OGRE "+arena.hp:m.label,m.x,m.y+4);
+    drawLandmark(ctx,mode,m);
+    ctx.fillText(mode==="boss"?"Phase "+arena.phase+" · "+arena.hp+" HP":mode==="heist"?m.label+" "+arena.stock[i]:m.label,m.x,m.y+(mode==="lake"?4:17));
   }
   for(const m of arena.danger){ctx.beginPath();ctx.arc(m.x,m.y,m.r,0,Math.PI*2);ctx.fillStyle="#b43a66bb";ctx.fill();ctx.fillStyle="#fff";ctx.fillText("❄",m.x,m.y+5);}
   ctx.restore();
+}
+
+// Small pixel illustrations share the character palette. Coordinates are local to each landmark.
+export function drawLandmark(ctx,mode,m){
+  ctx.save();
+  ctx.translate(m.x,m.y);
+  const box=(x,y,w,h,color)=>{ctx.fillStyle=color;ctx.fillRect(x,y,w,h);};
+  if(mode==="ornaments"){
+    box(-3,0,6,13,"#724833");
+    for(let i=0;i<4;i++)box(-5-i*3,-24+i*5,10+i*6,7,i%2?"#286251":"#448261");
+    if(m.label==="FOUND"){box(-5,-11,10,10,"#e94b58");box(-3,-13,6,2,"#edc463");}
+  }else if(mode==="boss"){
+    box(-20,-20,40,31,"#6a80ae");box(-24,-29,8,16,"#d5eff8");box(16,-29,8,16,"#d5eff8");
+    box(-16,-15,32,21,"#bedfee");box(-12,-10,6,4,"#582a55");box(6,-10,6,4,"#582a55");
+    box(-7,1,14,5,"#4f4358");box(-6,1,3,3,"#fff");box(4,1,3,3,"#fff");
+  }else if(mode==="workshop" || mode==="heist"){
+    box(-14,-19,28,22,"#cc4550");box(-17,-21,34,6,"#ee6870");box(-3,-22,6,25,"#ffd366");
+    box(-9,-26,8,5,"#ffd366");box(1,-26,8,5,"#ffd366");
+  }else if(mode==="raceway" || mode==="avalanche"){
+    box(-10,-24,3,29,"#744636");
+    for(let y=0;y<3;y++)for(let x=0;x<4;x++)box(-7+x*4,-23+y*4,4,4,(x+y)%2?"#324657":"#faf2df");
+  }else if(mode==="candy_maze"){
+    box(-3,-16,7,23,"#fff");box(-11,-18,14,5,"#fff");box(-12,-16,5,6,"#db4059");
+    for(let i=0;i<3;i++)box(-3,-13+i*7,7,3,"#db4059");
+  }
+  ctx.restore();
+}
+
+let context;
+export function playBell(kind,volume,voice=0){
+  if(!volume) return;
+  const AudioCtx=globalThis.AudioContext||globalThis.webkitAudioContext;
+  if(!AudioCtx) return;
+  context ||= new AudioCtx();
+  if(context.state!=="running"){context.resume().catch(()=>{});if(context.state!=="running")return;}
+  const tone=context.createOscillator(), gain=context.createGain(), now=context.currentTime;
+  const [start,end]=({hurt:[210,75],count:[690,540],go:[650,1050],strike:[320+voice*19,130],treasure:[690,1150]})[kind];
+  tone.type=kind==="hurt"?"triangle":"sine";
+  tone.frequency.setValueAtTime(start,now);tone.frequency.exponentialRampToValueAtTime(end,now+.16);
+  gain.gain.setValueAtTime(.001,now);gain.gain.exponentialRampToValueAtTime(Math.max(.002,volume*.16),now+.01);
+  gain.gain.exponentialRampToValueAtTime(.001,now+.21);
+  tone.connect(gain);gain.connect(context.destination);tone.start(now);tone.stop(now+.22);
+  tone.onended=()=>{tone.disconnect();gain.disconnect();};
 }

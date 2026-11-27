@@ -18,6 +18,9 @@ SQLITE_PATH = os.getenv("SQLITE_PATH", "instance/dev.db")
 
 
 def _connect_sqlite():
+    parent = os.path.dirname(SQLITE_PATH)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(SQLITE_PATH)
     conn.row_factory = sqlite3.Row
     return conn

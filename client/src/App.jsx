@@ -33,7 +33,7 @@ const COLOR_LOOKUP = PLAYER_COLORS.reduce((acc, color) => {
   return acc;
 }, {});
 
-import { levels, heroes, festivalTrack } from "./festival";
+import { levels, heroes, festivalTrack, playBell } from "./festival";
 
 const MUSIC_TRACKS = {
   menu: "/assets/audio/gamergang-silent-moments-258504.mp3",
@@ -192,8 +192,6 @@ const mergeWorldWithRoom = (prevWorld, room) => {
 
 export default function App() {
   const socketRef = useRef(null);
-  const inputRef = useRef({ x: 0, y: 0 });
-  const lastInputSentRef = useRef(0);
   const lastInputValueRef = useRef({ x: 0, y: 0 });
   const audioRef = useRef(null);
   const currentTrackRef = useRef("");
@@ -223,6 +221,8 @@ export default function App() {
     const stored = Number(localStorage.getItem("sfxVolume") ?? DEFAULT_SFX_VOLUME);
     return Number.isFinite(stored) ? clamp01(stored) : DEFAULT_SFX_VOLUME;
   });
+  const mixRef=useRef(0);
+  mixRef.current=isMuted?0:sfxVolume;
   const [counting,setCounting]=useState(false);
   const [needsTap, setNeedsTap] = useState(false);
   const [announcement, setAnnouncement] = useState(null);
@@ -337,7 +337,7 @@ export default function App() {
         return { ...prev, ...payload.room, players: payload.world.players };
       });
     });
-    socket.on("party_countdown",payload=>setCounting(payload.value!=="GO!"));
+    socket.on("party_countdown",payload=>{setCounting(payload.value!=="GO!");playBell(payload.value==="GO!"?"go":"count",mixRef.current);});
     socket.on("round_started", (payload) => {
       setRoom(payload.room);
     });
@@ -398,7 +398,7 @@ export default function App() {
     if (!room) return MUSIC_TRACKS.menu;
     if (room.status === "finished") {
       const me=room.players.find(p=>p.id===youId);
-      return festivalTrack(me && me.score===Math.max(...room.players.map(p=>p.score))?"victory":"defeat");
+      return festivalTrack(me?.winner?"victory":"defeat");
     }
     if (counting) return festivalTrack("countdown");
     if (room.status === "lobby") return MUSIC_TRACKS.lobby;
@@ -543,7 +543,7 @@ export default function App() {
     setMenuOpen(false);
     setLeaderboardOpen(false);
     setStoreOpen(false);
-    inputRef.current = { x: 0, y: 0 };
+    lastInputValueRef.current = { x: 0, y: 0 };
   };
 
   const emit = (event, payload) => {
@@ -704,7 +704,7 @@ export default function App() {
   useEffect(()=>{
     const prior=priorVitals.current;
     if (levels[room?.roundType] && room?.status==="in_round" && prior?.round===room.currentRound) {
-      if (you?.ringsLeft<prior.hearts) playWhoosh();
+      if (you?.ringsLeft<prior.hearts) playBell("hurt",mixRef.current);
       else if (you?.roundScore>prior.score || you?.cargo>prior.cargo) playCollect();
     }
     priorVitals.current={round:room?.currentRound,hearts:you?.ringsLeft,score:you?.roundScore,cargo:you?.cargo};
@@ -725,6 +725,7 @@ export default function App() {
     emit("action");
     if (!room) return;
     if (room.status === "finished") return;
+    if(levels[room.roundType]) playBell("strike",mixRef.current,Math.max(0,Object.keys(heroes).indexOf(you?.character)));
     const roundType = room.roundType;
     const isThrowRound =
       room.status === "lobby" ||
@@ -758,7 +759,6 @@ export default function App() {
   };
 
   const handleJoystick = (x, y) => {
-    inputRef.current = { x, y };
     const last = lastInputValueRef.current;
     if (last.x !== x || last.y !== y) {
       lastInputValueRef.current = {x,y};
@@ -884,8 +884,8 @@ export default function App() {
               </label>
 
               <div className="button-row">
-                <button className="primary" onClick={handleCreate}>
-                  Create room
+                <button className="primary" disabled={!connected} onClick={handleCreate}>
+                  {connected?"Create room":"Connecting…"}
                 </button>
                 <button className="secondary" onClick={handleJoin}>
                   Join room
@@ -1045,6 +1045,7 @@ export default function App() {
           {waitingForHost && (
             <div className="overlay">
               <div className="overlay-card">
+                {room.lastResult && <strong>{room.lastResult}</strong>}
                 <div className="overlay-title">Next Round: {roundLabel(nextRoundType)}</div>
                 <div className="overlay-sub">{roundInstruction(nextRoundType)}</div>
                 <div className="overlay-sub">Waiting for host · Start round {nextRound} when ready.</div>
@@ -1063,6 +1064,7 @@ export default function App() {
                 <div className="final-header">
                   <div>
                     <div className="final-title">Final Results</div>
+                    {room.lastResult && <strong>{room.lastResult}</strong>}
                     <div className="final-sub">
                       {youPlacement ? `You placed #${youPlacement}` : "Thanks for playing!"}
                     </div>

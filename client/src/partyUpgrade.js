@@ -112,7 +112,14 @@ function showCenter(title, subtitle = "", duration = 1050, mode = "default") {
   const node = ensureLayer().querySelector(".party-center");
   window.clearTimeout(centerTimer);
   node.dataset.mode = mode;
-  node.innerHTML = `<strong>${title}</strong>${subtitle ? `<span>${subtitle}</span>` : ""}`;
+  const heading=document.createElement("strong");
+  heading.textContent=title;
+  node.replaceChildren(heading);
+  if(subtitle){
+    const detail=document.createElement("span");
+    detail.textContent=subtitle;
+    node.append(detail);
+  }
   node.hidden = false;
   node.classList.remove("party-center-pop");
   void node.offsetWidth;

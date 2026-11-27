@@ -315,6 +315,7 @@ def handle_party_start_round(_data=None):
         room.current_round += 1
         room.round_duration = game_server.ROUND_DURATIONS.get(round_type, 55)
         game_server._setup_round(room, round_type)
+        room.round_duration = game_server.festival.round_duration(room,room.round_duration)
         room.status = "in_round"
         room.round_ends_at = time.time() + room.round_duration
         room.task_running = True
@@ -328,23 +329,6 @@ def handle_party_start_round(_data=None):
     )
     socketio.emit("round_started", payload, to=room_code)
     socketio.start_background_task(game_server._run_round_timer, room_code, round_number)
-
-_original_socketio_emit = socketio.emit
-_world_emit_count = {}
-
-
-def _optimized_emit(event, *args, **kwargs):
-    if event == "world_state":
-        room_code = kwargs.get("to") or kwargs.get("room") or "_global"
-        count = _world_emit_count.get(room_code, 0) + 1
-        _world_emit_count[room_code] = count
-        if count % 2:
-            return None
-    return _original_socketio_emit(event, *args, **kwargs)
-
-
-socketio.emit = _optimized_emit
-
 
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")

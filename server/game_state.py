@@ -49,6 +49,7 @@ class PlayerState:
     color: str
     score: int = 0
     round_score: int = 0
+    winner: bool = False
     character: str = "classic"
     cargo: int = 0
     checkpoint: int = 0
@@ -93,6 +94,7 @@ class RoomState:
     players: dict = field(default_factory=dict)
     status: str = "lobby"
     current_round: int = 0
+    last_result: str = ""
     festival: dict = field(default_factory=dict)
     difficulty: str = "medium"
     ai_difficulty: str = "medium"
@@ -281,7 +283,7 @@ class GameState:
                         if not next_host and room.players:
                             next_host = next(iter(room.players))
                         room.host_sid = next_host
-                    if not room.players:
+                    if not any(not p.is_bot for p in room.players.values()):
                         del self.rooms[code]
                         return None
                     return room
@@ -296,6 +298,7 @@ class GameState:
                     "name": player.name,
                     "color": player.color,
                     "character": player.character,
+                    "winner": player.winner,
                     "x": player.x,
                     "y": player.y,
                     "score": player.score,
@@ -313,6 +316,7 @@ class GameState:
         return {
             "code": room.code,
             "status": room.status,
+            "lastResult": room.last_result,
             "settings": [room.selected_mode, room.requested_rounds, room.difficulty, room.ai_difficulty],
             "currentRound": room.current_round,
             "hostId": room.host_sid,
@@ -323,23 +327,6 @@ class GameState:
             "width": room.width,
             "height": room.height,
         }
-
-    def record_collect(self, sid):
-        room = self.get_room_by_player(sid)
-        if not room:
-            return None, None
-        with room.lock:
-            if room.status != "in_round":
-                return room, "Round not active"
-            player = room.players.get(sid)
-            if not player:
-                return room, "Player not found"
-            now = time.time()
-            if now - player.last_collect_ts < 0.2:
-                return room, "Too fast"
-            player.last_collect_ts = now
-            player.round_score += 1
-            return room, None
 
     def set_ready(self, sid, ready):
         room = self.get_room_by_player(sid)

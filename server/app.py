@@ -334,6 +334,7 @@ def _world_payload(room):
                 "name": player.name,
                 "color": player.color,
                 "character": player.character,
+                "winner": player.winner,
                 "cargo": player.cargo,
                 "checkpoint": player.checkpoint,
                 "acting": room.round_elapsed - player.last_action_ts < .25 and player.last_action_ts > 0 if room.round_type in festival.MODES else False,
@@ -365,6 +366,7 @@ def _world_payload(room):
             "maxRounds": room.max_rounds,
             "hostId": room.host_sid,
             "nextRoundType": _next_round_type(room),
+            "lastResult": room.last_result,
         },
         "world": {
             "festival": festival.public(room) if room.round_type in festival.MODES else {},
@@ -724,7 +726,8 @@ def _maybe_spawn_snowball_boss(room, now, dt):
         _spawn_snowball_boss(room, now)
 
 def _move_with_walls(room, player, dt, speed):
-    speed *= _player_speed_multiplier(player)
+    if room.round_type not in festival.MODES:
+        speed *= _player_speed_multiplier(player)
     dx = player.input_x
     dy = player.input_y
     new_x = player.x + dx * speed * dt
@@ -1497,6 +1500,7 @@ def _add_trail_tile(room, player, tx, ty):
         "size": size,
         "color": player.color,
                 "character": player.character,
+                "winner": player.winner,
                 "cargo": player.cargo,
                 "checkpoint": player.checkpoint,
                 "acting": room.round_elapsed - player.last_action_ts < .25 and player.last_action_ts > 0 if room.round_type in festival.MODES else False,
@@ -2753,10 +2757,11 @@ def _world_loop():
                         if len(alive_teams) == 1:
                             end_finished, end_payload = _finish_round(room)
 
-                payload = _world_payload(room)
+                payload = _world_payload(room) if room.tick % 2 == 0 else None
                 announcements = list(room.announcements)
                 room.announcements = []
-            socketio.emit("world_state", payload, to=room.code)
+            if payload:
+                socketio.emit("world_state", payload, to=room.code)
             if announcements:
                 for announcement in announcements:
                     socketio.emit("announcement", announcement, to=room.code)
@@ -2780,6 +2785,18 @@ def _ensure_world_loop():
 
 def _finish_round(room):
     finished = False
+    room.last_result = ""
+    if room.round_type == "boss":
+        won = room.festival["hp"] <= 0
+        room.last_result = "Frost Ogre defeated!" if won else "The Frost Ogre held the North Pole."
+    elif room.round_type == "heist":
+        green, red = room.festival["stock"]
+        room.last_result = "Vaults tied" if green == red else ("Green" if green > red else "Red") + " vault wins"
+        room.last_result += f" · {green} to {red}"
+    elif room.round_type in festival.MODES and room.players:
+        leader = max(p.round_score for p in room.players.values())
+        names = ", ".join(p.name for p in room.players.values() if p.round_score == leader)
+        room.last_result = f"{names} · {leader} points"
     if room.round_type == "light":
         holder_id = room.light.get("holder") if room.light else ""
         if holder_id and holder_id in room.players:
@@ -2796,7 +2813,13 @@ def _finish_round(room):
     if finished and room.players:
         max_score = max(player.score for player in room.players.values())
         winners = [player for player in room.players.values() if player.score == max_score]
+        if room.max_rounds == 1 and room.round_type == "boss":
+            winners = list(room.players.values()) if room.festival["hp"]==0 else []
+        elif room.max_rounds == 1 and room.round_type == "heist":
+            stock=room.festival["stock"]
+            winners=[p for p in room.players.values() if stock[p.team]==max(stock)]
         for winner in winners:
+            winner.winner = True
             if winner.account_id:
                 winner.crowns = add_crowns(winner.account_id, CROWNS_PER_WIN)
     payload = _room_payload(room)
@@ -3067,6 +3090,7 @@ def handle_start_game(_data=None):
             return
         for player in room.players.values():
             player.score = 0
+            player.winner = False
             player.round_score = 0
             player.ready = False
             player.alive = True
@@ -3082,6 +3106,7 @@ def handle_start_game(_data=None):
                 player.ai_dir_y = 0.0
                 player.ai_idle_until = 0.0
         room.status = "between_rounds"
+        room.last_result = ""
         room.current_round = 0
         room.round_type = "lobby"
         order = list(ROUND_SEQUENCE)
@@ -3135,6 +3160,7 @@ def handle_start_round(_data=None):
         round_type = order[room.current_round - 1]
         room.round_duration = ROUND_DURATIONS.get(round_type, 45)
         _setup_round(room, round_type)
+        room.round_duration = festival.round_duration(room,room.round_duration)
         room.status = "in_round"
         room.round_ends_at = time.time() + room.round_duration
         room.task_running = True
