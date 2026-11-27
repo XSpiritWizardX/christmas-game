@@ -203,6 +203,7 @@ export default function App() {
     collect: { pool: [], index: 0 }
   });
   const prevGiftsRef = useRef([]);
+  const [quickStarting, setQuickStarting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [name, setName] = useState(defaultName);
   const [roomCode, setRoomCode] = useState(inviteCode);
@@ -254,8 +255,9 @@ export default function App() {
     socketRef.current = socket;
 
     socket.on("connect", () => setConnected(true));
-    socket.on("disconnect", () => setConnected(false));
+    socket.on("disconnect", () => { setConnected(false); setQuickStarting(false); });
     socket.on("server_error", (payload) => {
+      setQuickStarting(false);
       setError(payload?.message || "Server error");
     });
     socket.on("room_joined", (payload) => {
@@ -343,6 +345,7 @@ export default function App() {
     });
     socket.on("party_countdown",payload=>{setCounting(payload.value!=="GO!");playBell(payload.value==="GO!"?"go":"count",mixRef.current);});
     socket.on("round_started", (payload) => {
+      setQuickStarting(false);
       setRoom(payload.room);
     });
     socket.on("round_ended", (payload) => {
@@ -544,6 +547,7 @@ export default function App() {
   }, [room?.players]);
 
   const resetState = () => {
+    setQuickStarting(false);
     setRoom(null);
     setWorld(null);
     setYouId("");
@@ -890,6 +894,15 @@ export default function App() {
               <h1>Christmas Sprint</h1>
               <p className="subtitle">A Christmas Competition.</p>
 
+              {!inviteCode() && <button className="primary quick-play" disabled={!connected || quickStarting}
+                onClick={() => {
+                  setError("");
+                  setQuickStarting(true);
+                  emit("quick_play", { name, color: colorId, token: authToken });
+                }}>
+                {quickStarting ? "Starting race…" : "Quick Play"}
+                <small>Race two AI reindeer</small>
+              </button>}
               <label className="field">
                 <span>Your name</span>
                 <input
@@ -1071,7 +1084,7 @@ export default function App() {
             </>
           )}
 
-          {waitingForHost && (
+          {waitingForHost && !quickStarting && (
             <div className="overlay">
               <div className="overlay-card">
                 {room.lastResult && <strong>{room.lastResult}</strong>}
