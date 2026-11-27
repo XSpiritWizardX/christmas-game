@@ -1,3 +1,4 @@
+import { drawFloor } from "./arenaArt.js";
 import React, { useEffect, useRef } from "react";
 
 const PLAYER_COLORS = [
@@ -121,25 +122,28 @@ const getDirection = (fx, fy) => {
   return fx < -0.2 ? "left" : "right";
 };
 
-const drawFacing = (ctx, left, top, pixel, color, direction) => {
-  ctx.fillStyle = color;
-  if (direction === "up") {
-    ctx.fillRect(left + 6 * pixel, top + 2 * pixel, 4 * pixel, pixel);
-    ctx.fillRect(left + 5 * pixel, top + 3 * pixel, 6 * pixel, pixel);
-    return;
+function drawParka(ctx, left, top, pixel, direction, step) {
+  ctx.save();
+  ctx.translate(left, top);
+  ctx.scale(pixel, pixel);
+  ctx.fillStyle = "#fff5d6";
+  ctx.fillRect(7, -1, 3, 2);
+  ctx.fillRect(4, 3, 8, 2);
+  if (direction !== "up") {
+    const faceX = direction === "left" ? 4 : direction === "right" ? 6 : 5;
+    ctx.fillStyle = "#eeb88a";
+    ctx.fillRect(faceX, 5, 6, 3);
+    ctx.fillStyle = "#293a46";
+    ctx.fillRect(faceX, 5, 6, 2);
+    ctx.fillStyle = "#a8eaf0";
+    ctx.fillRect(faceX + 1, 5, 2, 1);
+    ctx.fillRect(faceX + 4, 5, 1, 1);
   }
-  if (direction === "left") {
-    ctx.fillRect(left + 9 * pixel, top + 2 * pixel, pixel, pixel);
-    ctx.fillStyle = "#2a1a12";
-    ctx.fillRect(left + 6 * pixel, top + 3 * pixel, pixel, pixel);
-    return;
-  }
-  if (direction === "right") {
-    ctx.fillRect(left + 6 * pixel, top + 2 * pixel, pixel, pixel);
-    ctx.fillStyle = "#2a1a12";
-    ctx.fillRect(left + 9 * pixel, top + 3 * pixel, pixel, pixel);
-  }
-};
+  ctx.fillStyle = "#244d52";
+  ctx.fillRect(4, 8, 8, 2);
+  ctx.fillRect(direction === "left" ? 10 : 3, 9, 2, 2 + step);
+  ctx.restore();
+}
 
 const drawFeet = (ctx, left, top, pixel, color, step, direction) => {
   ctx.fillStyle = color;
@@ -200,27 +204,31 @@ export default function GameCanvas({ world, room, youId, roundType }) {
     if (nowMs - lastRenderRef.current < minFrame) return;
     lastRenderRef.current = nowMs;
     const ctx = canvas.getContext("2d");
-    ctx.imageSmoothingEnabled = false;
+
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
+    const density = Math.min(window.devicePixelRatio || 1, 2);
+    if (canvas.width !== Math.round(width * density) || canvas.height !== Math.round(height * density)) {
+      canvas.width = Math.round(width * density);
+      canvas.height = Math.round(height * density);
     }
+    ctx.setTransform(density, 0, 0, density, 0, 0);
+    ctx.imageSmoothingEnabled = false;
 
     const worldWidth = snapshot.width || 960;
     const worldHeight = snapshot.height || 540;
     const useFixedView = worldWidth > 2000 || worldHeight > 1200;
     const targetViewWidth = useFixedView ? 1200 : worldWidth;
     const targetViewHeight = useFixedView ? 675 : worldHeight;
-    const baseScale = Math.min(canvas.width / targetViewWidth, canvas.height / targetViewHeight);
+    const baseScale = Math.min(width / targetViewWidth, height / targetViewHeight);
     const zoom = roundType && roundType !== "lobby" ? (useFixedView ? 1.0 : 1.15) : 1.0;
-    const scale = baseScale * zoom;
+    const portraitArena = height > width && (roundType === "raceway" || roundType === "workshop");
+    const scale = portraitArena ? Math.min(height * .7 / worldHeight, width / 420) : baseScale * zoom;
     const animate = document.documentElement.dataset.motion!=="reduced" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const now = animate ? performance.now()/1000 : 0;
 
-    const viewWidth = canvas.width / scale;
-    const viewHeight = canvas.height / scale;
+    const viewWidth = width / scale;
+    const viewHeight = height / scale;
     const you = snapshot.players?.find((player) => player.id === youId);
     const camX = you
       ? Math.max(0, Math.min(worldWidth - viewWidth, (you.x ?? worldWidth / 2) - viewWidth / 2))
@@ -229,12 +237,12 @@ export default function GameCanvas({ world, room, youId, roundType }) {
       ? Math.max(0, Math.min(worldHeight - viewHeight, (you.y ?? worldHeight / 2) - viewHeight / 2))
       : 0;
 
-    const fitsWidth = worldWidth * scale <= canvas.width;
-    const fitsHeight = worldHeight * scale <= canvas.height;
-    const offsetX = fitsWidth ? (canvas.width - worldWidth * scale) / 2 : -camX * scale;
-    const offsetY = fitsHeight ? (canvas.height - worldHeight * scale) / 2 : -camY * scale;
+    const fitsWidth = worldWidth * scale <= width;
+    const fitsHeight = worldHeight * scale <= height;
+    const offsetX = fitsWidth ? (width - worldWidth * scale) / 2 : -camX * scale;
+    const offsetY = fitsHeight ? (height - worldHeight * scale) / 2 : -camY * scale;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, width, height);
 
     ctx.save();
     ctx.translate(offsetX, offsetY);
@@ -242,6 +250,8 @@ export default function GameCanvas({ world, room, youId, roundType }) {
 
     ctx.fillStyle = levels[roundType]?.[2] || "#f4fbff";
     ctx.fillRect(0, 0, worldWidth, worldHeight);
+
+    drawFloor(ctx, roundType, worldWidth, worldHeight);
 
     if (snapshot.thinIce && snapshot.thinIce.broken && snapshot.thinIce.broken.length) {
       const tileSize = snapshot.thinIce.tileSize || 32;
@@ -316,7 +326,16 @@ export default function GameCanvas({ world, room, youId, roundType }) {
     if (snapshot.walls && snapshot.walls.length) {
       ctx.fillStyle = "#a67c52";
       snapshot.walls.forEach((wall) => {
+        ctx.fillStyle = roundType === "raceway" ? "#285a56" : "#a67c52";
         ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+        if (roundType === "raceway") {
+          for (let y = wall.y; y < wall.y + wall.h; y += 38) {
+            ctx.fillStyle = "#4a7e6f";
+            ctx.fillRect(wall.x + 2, y, wall.w - 4, Math.min(28, wall.y + wall.h - y));
+            ctx.fillStyle = "#f4ffff";
+            ctx.fillRect(wall.x, y, wall.w, Math.min(6, wall.y + wall.h - y));
+          }
+        }
       });
     }
 
@@ -525,7 +544,7 @@ export default function GameCanvas({ world, room, youId, roundType }) {
       }
     }
 
-    drawArena(ctx,roundType,snapshot.festival,snapshot.players?.find(p=>p.id===youId));
+    drawArena(ctx,roundType,snapshot.festival,snapshot.players?.find(p=>p.id===youId), now);
     if (snapshot.players) {
       snapshot.players.forEach((player, index) => {
         const isHolly = (player.name || "").trim().toLowerCase() === "holly";
@@ -610,17 +629,11 @@ export default function GameCanvas({ world, room, youId, roundType }) {
           }
         }
         if (player.alive && !(heroSprite && heroSprite.complete)) {
-          drawFacing(ctx, left, top + bob, pixel, COLOR_HEX[player.color] || "#ffffff", direction);
+          drawParka(ctx, left, top + bob, pixel, direction, step);
           drawFeet(ctx, left, top + bob, pixel, "#2a1a12", step, direction);
         }
         ctx.globalAlpha = 1;
-        if (player.id === youId) {
-          ctx.strokeStyle = "rgba(46, 125, 50, 0.8)";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(px, py + bob, 18, 0, Math.PI * 2);
-          ctx.stroke();
-        }
+
       });
     }
 
@@ -634,7 +647,7 @@ export default function GameCanvas({ world, room, youId, roundType }) {
         mapHeight = 72;
         mapWidth = (mapHeight * worldWidth) / worldHeight;
       }
-      const compactHud = canvas.height < 520;
+      const compactHud = height < 520;
       if (compactHud) {
         mapWidth = 90;
         mapHeight = (mapWidth * worldHeight) / worldWidth;
@@ -643,8 +656,8 @@ export default function GameCanvas({ world, room, youId, roundType }) {
           mapWidth = (mapHeight * worldWidth) / worldHeight;
         }
       }
-      const mapX = compactHud ? mapPadding : canvas.width - mapWidth - mapPadding;
-      const mapY = compactHud ? mapPadding + 86 : (canvas.height < 450 ? 180 : 240) + mapPadding;
+      const mapX = compactHud ? mapPadding : width - mapWidth - mapPadding;
+      const mapY = compactHud ? mapPadding + 86 : (height < 450 ? 180 : 240) + mapPadding;
 
       ctx.save();
       ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
