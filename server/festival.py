@@ -31,6 +31,8 @@ HEROES = (
     "knight",
 )
 SCALE = {"easy": 0.8, "medium": 1, "hard": 1.25}
+RACE_LAPS = 6
+FESTIVAL_SECONDS = dict(workshop=180, raceway=240, avalanche=150, chaos=150, candy_maze=180, lake=150, heist=180, boss=180, sleigh=150, ornaments=150)
 
 
 def marker(x, y, label, radius=22):
@@ -113,6 +115,7 @@ def prepare(room):
             )
         marks.append(marker(895, 270, "FINISH", 45))
         if mode == "raceway":
+            f.update(laps=RACE_LAPS, progress={}, qualified=[], quota=max(1, math.ceil(len(room.players) * 0.65)))
             f["fuel"] = [marker(m["x"] - 42, 38 if i % 2 == 0 else 504, "FUEL", 22)
                          for i, m in enumerate(marks[:-1])]
     elif mode == "heist":
@@ -150,6 +153,8 @@ def action(room, p):
         return
     p.last_action_ts = room.round_elapsed
     f, mode = room.festival, room.round_type
+    if mode == "raceway" and p.sid in f["qualified"]:
+        return
     if mode == "raceway" and p.boost_charges and room.round_elapsed >= p.boost_until:
         p.boost_charges -= 1
         p.boost_until = room.round_elapsed + 1.15
@@ -301,8 +306,9 @@ def step(room, dt, move):
     f, mode, t = room.festival, room.round_type, room.round_elapsed
     pace = SCALE[room.difficulty]
     z = t * pace
+    race_z = z * (1 + min(0.6, t / 400))
     if mode == "raceway":
-        f["obstacles"] = [marker(m["x"] - 66, m["y"] + 43 * math.sin(z * 1.8 + i), "DRIFT", 27)
+        f["obstacles"] = [marker(m["x"] - 66, m["y"] + (43 + min(20, t / 10)) * math.sin(race_z * 1.8 + i), "DRIFT", 27)
                           for i, m in enumerate(f["markers"][:-1])]
     elif mode == "workshop":
         f["obstacles"] = [marker(x, 270 + 177 * math.sin(z * rate + phase), "SORTER", 34)
@@ -336,7 +342,7 @@ def step(room, dt, move):
         f["warning"] = boss_hazards(z + 0.65 * pace, phase)
         f["danger"] = boss_hazards(z, phase) if t >= 0.65 else []
     for p in room.players.values():
-        if not p.alive:
+        if not p.alive or (mode == "raceway" and p.sid in f["qualified"]):
             continue
         if p.is_bot and t >= p.ai_next_decision_ts:
             p.ai_next_decision_ts = (
@@ -425,8 +431,24 @@ def step(room, dt, move):
                 p.checkpoint += 1
                 award(p, 10 if p.checkpoint == 5 else 2)
                 if p.checkpoint == 5:
-                    f["completed"] = True
-                    break
+                    if mode == "avalanche":
+                        f["completed"] = True
+                        break
+                    lap = f["progress"].get(p.sid, 0) + 1
+                    f["progress"][p.sid] = lap
+                    if lap >= f["laps"]:
+                        f["qualified"].append(p.sid)
+                        p.input_x = p.input_y = p.vel_x = p.vel_y = 0
+                        if len(f["qualified"]) >= f["quota"]:
+                            f["completed"] = True
+                            break
+                    else:
+                        p.x, p.y = 65, 95
+                        p.checkpoint = 0
+                        p.refueled_gate = -1
+                        p.boost_charges = 1
+                        p.boost_until = 0
+                        p.vel_x = p.vel_y = 0
     if mode == "sleigh" and len(room.players) > 1:
         survivors = [p for p in room.players.values() if p.alive]
         if len(survivors) == 1:
@@ -438,4 +460,4 @@ def round_duration(room, default):
     if room.round_type not in MODES:
         return default
     # Time pressure scales collection, racing and delivery objectives too.
-    return round(55 / SCALE[room.difficulty])
+    return round(FESTIVAL_SECONDS[room.round_type] / SCALE[room.difficulty])
