@@ -54,9 +54,27 @@ export function drawArena(ctx, mode, arena, player){
     ctx.beginPath();ctx.arc(m.x,m.y,m.r,0,Math.PI*2);
     ctx.fillStyle=mode==="lake"?"#e6fbff":accent;ctx.fill();
     ctx.strokeStyle=mode==="workshop" && i===(player?.cargo?1+(player.checkpoint%2):0)?"#ffbc20":"#ffffff";ctx.lineWidth=4;ctx.stroke();
+    if (mode === "workshop" && i === 1 + ((player?.checkpoint || 0) % 2)) {
+      ctx.fillStyle = "#392526";
+      ctx.fillRect(m.x - 35, m.y - m.r - 20, 70, 18);
+      ctx.fillStyle = "#fff7b9";
+      ctx.fillText("DROP-OFF", m.x, m.y - m.r - 6);
+    }
     ctx.fillStyle=mode==="lake"?accent:"#fff";
     drawLandmark(ctx,mode,m);
     ctx.fillText(mode==="boss"?"Phase "+arena.phase+" · "+arena.hp+" HP":mode==="heist"?m.label+" "+arena.stock[i]:m.label,m.x,m.y+(mode==="lake"?4:17));
+  }
+  for (const marker of arena.warning || []) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(marker.x, marker.y, marker.r, 0, 2 * Math.PI);
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#352238";
+    ctx.stroke();
+    ctx.fillStyle = "#352238";
+    ctx.fillText("!", marker.x, marker.y + 5);
+    ctx.restore();
   }
   for(const m of arena.danger){ctx.beginPath();ctx.arc(m.x,m.y,m.r,0,Math.PI*2);ctx.fillStyle="#b43a66bb";ctx.fill();ctx.fillStyle="#fff";ctx.fillText("❄",m.x,m.y+5);}
   ctx.restore();

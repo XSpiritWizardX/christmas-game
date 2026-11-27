@@ -260,6 +260,31 @@ def target(room, p):
     return None
 
 
+def boss_hazards(z, phase):
+    hazards = [
+        marker(
+            480
+            + (85 + 75 * math.sin(z)) * math.cos(z + i * math.tau / (phase * 2)),
+            270
+            + (85 + 75 * math.sin(z)) * math.sin(z + i * math.tau / (phase * 2)),
+            "FROST",
+            27,
+        )
+        for i in range(phase * 2)
+    ]
+    if phase >= 2:
+        # Ice falls sweep in crossing lanes while the orbiting guard remains active.
+        hazards += [
+            marker((z * 140 + i * 310) % 960, 130 + i * 120, "ICE", 20)
+            for i in range(3)
+        ]
+    if phase == 3:
+        hazards.append(
+            marker(480, 270, "PULSE", 15 + 45 * (1 + math.sin(z * 4)))
+        )
+    return hazards
+
+
 def step(room, dt, move):
     f, mode, t = room.festival, room.round_type, room.round_elapsed
     pace = SCALE[room.difficulty]
@@ -290,27 +315,8 @@ def step(room, dt, move):
     elif mode == "boss":
         f["phase"] = 1 + min(2, int(3 * (1 - f["hp"] / f["maxHp"])))
         phase = f["phase"]
-        f["danger"] = [
-            marker(
-                480
-                + (85 + 75 * math.sin(z)) * math.cos(z + i * math.tau / (phase * 2)),
-                270
-                + (85 + 75 * math.sin(z)) * math.sin(z + i * math.tau / (phase * 2)),
-                "FROST",
-                27,
-            )
-            for i in range(phase * 2)
-        ]
-        if phase >= 2:
-            # Ice falls sweep in crossing lanes while the orbiting guard remains active.
-            f["danger"] += [
-                marker((z * 140 + i * 310) % 960, 130 + i * 120, "ICE", 20)
-                for i in range(3)
-            ]
-        if phase == 3:
-            f["danger"].append(
-                marker(480, 270, "PULSE", 15 + 45 * (1 + math.sin(z * 4)))
-            )
+        f["warning"] = boss_hazards(z + 0.65 * pace, phase)
+        f["danger"] = boss_hazards(z, phase) if t >= 0.65 else []
     for p in room.players.values():
         if not p.alive:
             continue

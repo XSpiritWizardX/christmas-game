@@ -45,8 +45,14 @@ def smoke(driver, browser, mode):
         hud = host.locator(".hud-sub")
         hud.wait_for()
         code = re.search(r"Room (\w+)", hud.inner_text())[1]
+        host.get_by_role("button", name="Menu", exact=True).click()
+        host.get_by_role("button", name="Invite friends").click()
+        invite = host.get_by_label("Room invite link").input_value()
+        assert host.locator(".room-invite svg").is_visible()
+        peer.goto(invite)
+        assert peer.get_by_placeholder("ABCD").input_value() == code
+        host.get_by_role("button", name="Close menu").click()
         peer.get_by_placeholder("Santa").fill("Mobile QA")
-        peer.get_by_placeholder("ABCD").fill(code)
         peer.get_by_role("button", name="Join room").tap()
         peer.locator(".hud-sub").wait_for()
         host.get_by_role("button", name="Menu", exact=True).click()
@@ -68,7 +74,7 @@ def smoke(driver, browser, mode):
         host.wait_for_timeout(250)
         host.keyboard.up("d")
         host.keyboard.press("Space")
-        peer.get_by_role("button", name="Action", exact=True).tap()
+        peer.locator(".action-button").tap()
         p2 = next(p for p in worlds[mode]["players"] if p["id"] == p1["id"])
         assert p1["x"] != p2["x"], mode
         stick = peer.get_by_label("Movement joystick").bounding_box()
@@ -89,6 +95,17 @@ def smoke(driver, browser, mode):
                 break
             peer.wait_for_timeout(50)
         assert latest["x"] != guest["x"], mode
+        if mode == "boss":
+            peer.reload(wait_until="domcontentloaded")
+            peer.get_by_role("button", name="Strike", exact=True).wait_for()
+            assert code in peer.locator(".hud-sub").inner_text()
+            peer.get_by_role("button", name="Menu", exact=True).tap()
+            peer.get_by_label("Action button side").select_option("left")
+            peer.get_by_label("Control size").select_option("large")
+            peer.reload(wait_until="domcontentloaded")
+            peer.get_by_role("button", name="Strike", exact=True).wait_for()
+            assert peer.locator(".game-shell").get_attribute("data-hand") == "left"
+            assert peer.locator(".game-shell").get_attribute("data-control-size") == "large"
         assert not errors, errors
         print(
             f"{mode}: mobile client received desktop movement, bot and costume",
