@@ -21,7 +21,7 @@ export default function Joystick({ onMove, onAction }) {
     const base = baseRef.current;
     if (!base) return undefined;
 
-    const radius = 36;
+    const travelRadius = () => Math.max(1, (base.clientWidth - base.firstElementChild.offsetWidth) / 2);
     const applyKeys = () => {
       let dx = 0;
       let dy = 0;
@@ -34,6 +34,7 @@ export default function Joystick({ onMove, onAction }) {
         dx /= mag;
         dy /= mag;
       }
+      const radius = travelRadius();
       setKnob({ x: dx * radius, y: dy * radius });
       callbacks.current.onMove?.(dx, dy);
     };
@@ -60,6 +61,7 @@ export default function Joystick({ onMove, onAction }) {
       const centerY = rect.top + rect.height / 2;
       let dx = event.clientX - centerX;
       let dy = event.clientY - centerY;
+      const radius = travelRadius();
       const distance = Math.hypot(dx, dy);
       if (distance > radius) {
         dx = (dx / distance) * radius;
@@ -69,6 +71,17 @@ export default function Joystick({ onMove, onAction }) {
       callbacks.current.onMove?.(dx / radius, dy / radius);
     };
 
+    const stopMovement = () => {
+      pointerIdRef.current = null;
+      keysRef.current = { w: false, a: false, s: false, d: false };
+      applyKeys();
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) stopMovement();
+    };
+    window.addEventListener("blur", stopMovement);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    base.addEventListener("lostpointercapture", handlePointerUp);
     base.addEventListener("pointerdown", handlePointerDown);
     base.addEventListener("pointermove", handleMove);
     base.addEventListener("pointerup", handlePointerUp);
@@ -107,6 +120,9 @@ export default function Joystick({ onMove, onAction }) {
     window.addEventListener("keyup", handleKeyUp);
 
     return () => {
+      window.removeEventListener("blur", stopMovement);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      base.removeEventListener("lostpointercapture", handlePointerUp);
       base.removeEventListener("pointerdown", handlePointerDown);
       base.removeEventListener("pointermove", handleMove);
       base.removeEventListener("pointerup", handlePointerUp);
